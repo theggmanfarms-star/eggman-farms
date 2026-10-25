@@ -1,0 +1,31 @@
+/* Keeps the app working with no internet. Change VERSION when you upload new app files. */
+var VERSION = 'eggman-v1.1.0';
+var FILES = ['./', 'index.html', 'styles.css', 'config.js', 'calc.js', 'core.js', 'app.js', 'manifest.webmanifest',
+  'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable.png'];
+
+self.addEventListener('install', function (e) {
+  e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
+});
+self.addEventListener('activate', function (e) {
+  e.waitUntil(caches.keys().then(function (keys) {
+    return Promise.all(keys.filter(function (k) { return k !== VERSION; }).map(function (k) { return caches.delete(k); }));
+  }).then(function () { return self.clients.claim(); }));
+});
+self.addEventListener('fetch', function (e) {
+  var req = e.request;
+  if (req.method !== 'GET') return; // syncing with Google always goes to the network
+  var url = new URL(req.url);
+  var isApp = url.origin === self.location.origin;
+  var isFont = /fonts\.(googleapis|gstatic)\.com$/.test(url.hostname);
+  if (!isApp && !isFont) return;
+  // Show the saved copy at once (fast, works offline) and refresh it in the background.
+  e.respondWith(caches.open(VERSION).then(function (cache) {
+    return cache.match(req, { ignoreSearch: isApp }).then(function (hit) {
+      var net = fetch(req).then(function (res) {
+        if (res && (res.ok || res.type === 'opaque')) cache.put(req, res.clone());
+        return res;
+      }).catch(function () { return hit || (req.mode === 'navigate' ? cache.match('index.html') : undefined); });
+      return hit || net;
+    });
+  }));
+});
