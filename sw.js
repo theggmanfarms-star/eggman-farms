@@ -1,5 +1,5 @@
 /* Keeps the app working with no internet. Change VERSION when you upload new app files. */
-var VERSION = 'eggman-v1.1.0';
+var VERSION = 'eggman-v1.2.1';
 var FILES = ['./', 'index.html', 'styles.css', 'config.js', 'calc.js', 'core.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable.png'];
 
@@ -18,7 +18,15 @@ self.addEventListener('fetch', function (e) {
   var isApp = url.origin === self.location.origin;
   var isFont = /fonts\.(googleapis|gstatic)\.com$/.test(url.hostname);
   if (!isApp && !isFont) return;
-  // Show the saved copy at once (fast, works offline) and refresh it in the background.
+  // config.js and the page itself: always try the internet first, so a new link/key or update shows at once.
+  if (isApp && (req.mode === 'navigate' || /config\.js$/.test(url.pathname))) {
+    e.respondWith(caches.open(VERSION).then(function (cache) {
+      return fetch(req).then(function (res) { if (res && res.ok) cache.put(req, res.clone()); return res; })
+        .catch(function () { return cache.match(req, { ignoreSearch: true }).then(function (hit) { return hit || cache.match('index.html'); }); });
+    }));
+    return;
+  }
+  // Everything else: show the saved copy at once (fast, works offline) and refresh it in the background.
   e.respondWith(caches.open(VERSION).then(function (cache) {
     return cache.match(req, { ignoreSearch: isApp }).then(function (hit) {
       var net = fetch(req).then(function (res) {

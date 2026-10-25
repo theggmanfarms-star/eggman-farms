@@ -218,9 +218,25 @@
     }
     if (again) return sync(true);
   }
+  // Owner only, needs internet: replace one settings tab (Products, Users, Settings, Items, Schedule, Recipes).
+  async function saveMaster(table, rows) {
+    if (!navigator.onLine) throw new Error('Saving settings needs internet. Your other records still work offline.');
+    var res = await api({ action: 'master', userId: Store.session.user.id, token: Store.session.token, table: table, rows: rows });
+    if (!res.ok) throw new Error(res.error || 'Could not save.');
+    applyMaster(res.master); await kvSet('master', res.master);
+    Store.meta.masterHash = res.masterHash; await kvSet('meta', Store.meta);
+    emit();
+    return res;
+  }
+  // After the owner changes their own PIN, keep them logged in with the new one.
+  async function useNewPin(pin) {
+    var key = config().FARM_KEY;
+    Store.session.token = sha256(key + ':' + Store.session.user.id + ':' + String(pin));
+    await kvSet('session', Store.session);
+  }
   async function fullRefresh() { Store.meta.since = 0; Store.meta.masterHash = ''; await kvSet('meta', Store.meta); return sync(true); }
 
   window.EggCore = { TYPES: TYPES, Store: Store, init: init, save: save, sync: sync, login: login, logout: logout, pending: pending,
-    configured: configured, fullRefresh: fullRefresh, uid: uid, sha256: sha256, kvGet: kvGet, kvSet: kvSet,
+    configured: configured, fullRefresh: fullRefresh, saveMaster: saveMaster, useNewPin: useNewPin, uid: uid, sha256: sha256, kvGet: kvGet, kvSet: kvSet,
     onChange: function (f) { Store.listeners.push(f); } };
 })();

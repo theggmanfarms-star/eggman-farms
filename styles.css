@@ -101,7 +101,7 @@ input:focus,select:focus,textarea:focus,button:focus-visible,a:focus-visible{out
 .btn[disabled]{opacity:.5;cursor:not-allowed}
 .pills{display:flex;gap:6px;flex-wrap:wrap}
 .pill{min-height:40px;padding:0 14px;border-radius:20px;border:1px solid #CFC9B8;background:#fff;font-size:13px;font-weight:600;cursor:pointer}
-.pill.on{background:var(--green);border-color:var(--green);color:#fff}
+.pill.on{background:var(--green);border-color:var(--green);color:#fff!important}
 .pill.red{border-color:var(--red);color:var(--red)}.pill.red.on{background:var(--red);color:#fff}
 .qty{display:grid;grid-template-columns:44px 64px 44px;gap:6px;align-items:center}
 .qty input{text-align:center;padding:0 4px;font-weight:700}

@@ -77,6 +77,7 @@ var Calc = (function () {
     var stage;
     if (flock.status === 'closed') stage = 'Closed';
     else if (day < 1) stage = 'Not arrived';
+    else if (flock.stageOverride) stage = flock.stageOverride; // set by hand in the app
     else if (week <= s.broodingToWeek) stage = 'Brooding';
     else if (week <= s.growerToWeek) stage = 'Growing';
     else if (week <= s.preLayToWeek) stage = 'Pre-lay';
@@ -595,6 +596,81 @@ var Calc = (function () {
       store: eggStore(state, today), debtCents: debt, debtors: debtors, tasks: tasks };
   }
 
+  // ---------- DEBTS: how much, how old, who ----------
+  // Age of a debt = days since the oldest sale that is not yet paid off (payments clear the oldest first).
+  function oldestUnpaidDate(state, customerId, today) {
+    var L = customerLedger(state, customerId);
+    var paid = L.rows.reduce(function (a, r) { return a + r.credit; }, 0) + Math.max(0, -L.openingCents);
+    var owed = Math.max(0, L.openingCents);
+    var c = byId(state.customers)[customerId];
+    var start = c && c.createdAt ? String(c.createdAt).slice(0, 10) : (L.rows[0] ? L.rows[0].date : today);
+    if (paid < owed) return start;
+    paid -= owed;
+    for (var i = 0; i < L.rows.length; i++) { if (paid < L.rows[i].debit) return L.rows[i].date; paid -= L.rows[i].debit; }
+    return today;
+  }
+  function debtSummary(state, today) {
+    var month = monthOf(today), buckets = [
+      { label: '0–7 days', from: 0, to: 7, cents: 0, count: 0 }, { label: '8–30 days', from: 8, to: 30, cents: 0, count: 0 },
+      { label: '31–60 days', from: 31, to: 60, cents: 0, count: 0 }, { label: 'Over 60 days', from: 61, to: 1e9, cents: 0, count: 0 }];
+    var list = [], total = 0, credit = 0;
+    live(state.customers).forEach(function (c) {
+      var b = customerBalance(state, c.id);
+      if (b < 0) credit += -b;
+      if (b <= 0) return;
+      var since = oldestUnpaidDate(state, c.id, today), days = Math.max(0, dayDiff(since, today));
+      total += b;
+      list.push({ id: c.id, name: c.name, phone: c.phone || '', cents: b, since: since, days: days, overLimit: !!(c.credit && num(c.limit) > 0 && b > cents(c.limit)) });
+      for (var i = 0; i < buckets.length; i++) if (days >= buckets[i].from && days <= buckets[i].to) { buckets[i].cents += b; buckets[i].count++; break; }
+    });
+    list.sort(function (a, b) { return b.cents - a.cents; });
+    var collected = 0, newDebt = 0;
+    live(state.payments).forEach(function (p) { if (monthOf(p.date) === month) collected += cents(p.amount); });
+    live(state.sales).forEach(function (s) { if (monthOf(s.date) !== month) return; var t = saleTotals(s); if (t.totalCents > t.paidCents) newDebt += t.totalCents - t.paidCents; });
+    return { totalCents: total, count: list.length, buckets: buckets, customers: list, collectedThisMonthCents: collected, newDebtThisMonthCents: newDebt,
+      overLimit: list.filter(function (x) { return x.overLimit; }).length, creditHeldCents: credit };
+  }
+
+  // ---------- HISTORY: any day, month or year ----------
+  function periodSummary(state, from, to) {
+    var days = {}, tot = { eggs: 0, good: 0, cracked: 0, birdDays: 0, deaths: 0, salesCents: 0, receivedCents: 0, debtPaidCents: 0, expensesCents: 0, records: 0, sales: 0 };
+    function day(d) { return days[d] || (days[d] = { date: d, eggs: 0, birdDays: 0, deaths: 0, salesCents: 0, receivedCents: 0, records: 0, sales: 0 }); }
+    var fl = byId(state.flocks);
+    live(state.daily).forEach(function (d) {
+      if (d.date < from || d.date > to) return;
+      var e = dailyEggs(state, d), f = fl[d.flockId], bd = f ? birdsAtStartOf(state, f, d.date) : 0, x = day(d.date);
+      x.eggs += e.total; x.birdDays += bd; x.deaths += int(d.deaths) + int(d.culls); x.records++;
+      tot.eggs += e.total; tot.good += e.good; tot.cracked += e.cracked; tot.birdDays += bd; tot.deaths += int(d.deaths) + int(d.culls); tot.records++;
+    });
+    live(state.sales).forEach(function (s) {
+      if (s.date < from || s.date > to) return;
+      var t = saleTotals(s), x = day(s.date);
+      x.salesCents += t.totalCents; x.receivedCents += t.paidCents; x.sales++;
+      tot.salesCents += t.totalCents; tot.receivedCents += t.paidCents; tot.sales++;
+    });
+    live(state.payments).forEach(function (p) {
+      if (p.date < from || p.date > to) return;
+      day(p.date).receivedCents += cents(p.amount); tot.receivedCents += cents(p.amount); tot.debtPaidCents += cents(p.amount);
+    });
+    live(state.expenses).forEach(function (e) { if (e.date >= from && e.date <= to) tot.expensesCents += cents(e.amount); });
+    var rows = Object.keys(days).sort().map(function (k) { var x = days[k]; x.layRate = x.birdDays ? Math.round(x.eggs / x.birdDays * 1000) / 10 : 0; return x; });
+    tot.layRate = tot.birdDays ? Math.round(tot.eggs / tot.birdDays * 1000) / 10 : 0;
+    return { from: from, to: to, total: tot, days: rows };
+  }
+  function yearSummary(state, year, today) {
+    var months = [];
+    for (var m = 1; m <= 12; m++) {
+      var mm = year + '-' + pad(m), start = mm + '-01', end = lastDayOfMonth(mm);
+      if (today && start > today) break;
+      var p = periodSummary(state, start, today && end > today ? today : end);
+      p.month = mm; months.push(p);
+    }
+    var tot = { eggs: 0, deaths: 0, salesCents: 0, receivedCents: 0, expensesCents: 0, birdDays: 0 };
+    months.forEach(function (p) { Object.keys(tot).forEach(function (k) { tot[k] += p.total[k]; }); });
+    tot.layRate = tot.birdDays ? Math.round(tot.eggs / tot.birdDays * 1000) / 10 : 0;
+    return { year: year, months: months, total: tot };
+  }
+
   // ---------- MONTHLY REPORT: every activity on the farm for one month ----------
   function lastDayOfMonth(month) { return addDays(addMonths(month + '-01', 1), -1); }
   function balanceAt(state, customerId, date) {
@@ -842,7 +918,8 @@ var Calc = (function () {
     priceFor: priceFor, validateSale: validateSale, validateDaily: validateDaily, itemKg: itemKg, feedState: feedState,
     mixPreview: mixPreview, medState: medState, profit: profit, flockLifetime: flockLifetime,
     generateFlockTasks: generateFlockTasks, nextDate: nextDate, taskStatus: taskStatus, dashboard: dashboard,
-    lastDayOfMonth: lastDayOfMonth, balanceAt: balanceAt, monthlyReport: monthlyReport, reportHtml: reportHtml, money: money
+    lastDayOfMonth: lastDayOfMonth, balanceAt: balanceAt, monthlyReport: monthlyReport, reportHtml: reportHtml, money: money,
+    oldestUnpaidDate: oldestUnpaidDate, debtSummary: debtSummary, periodSummary: periodSummary, yearSummary: yearSummary
   };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = Calc;
