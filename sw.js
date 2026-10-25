@@ -1,10 +1,13 @@
 /* Keeps the app working with no internet. Change VERSION when you upload new app files. */
-var VERSION = 'eggman-v1.2.1';
+var VERSION = 'eggman-v1.2.2';
 var FILES = ['./', 'index.html', 'styles.css', 'config.js', 'calc.js', 'core.js', 'app.js', 'manifest.webmanifest',
-  'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable.png'];
+  'icon-192.png', 'icon-512.png', 'icon-maskable.png'];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
+  // Save each file on its own, so one missing file never stops the app working offline.
+  e.waitUntil(caches.open(VERSION).then(function (c) {
+    return Promise.all(FILES.map(function (f) { return c.add(f).catch(function () {}); }));
+  }).then(function () { return self.skipWaiting(); }));
 });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (keys) {
