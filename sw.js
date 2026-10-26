@@ -1,5 +1,5 @@
 /* Keeps the app working with no internet. Change VERSION when you upload new app files. */
-var VERSION = 'eggman-v1.2.2';
+var VERSION = 'eggman-v1.4.1';
 var FILES = ['./', 'index.html', 'styles.css', 'config.js', 'calc.js', 'core.js', 'app.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'icon-maskable.png'];
 

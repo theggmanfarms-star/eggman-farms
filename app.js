@@ -6,7 +6,7 @@
   var $modal = document.getElementById('modal');
   var FORMS = {}, LIVE = {}, ACT = {}, pendingConfirm = null, pendingDone = '', isForm = false;
   // The logo is built into index.html, so it shows even if the icons folder is missing.
-  var LOGO = (document.getElementById('brandLogo') || {}).src || 'icons/icon-192.png';
+  var LOGO = (document.getElementById('brandLogo') || {}).src || 'icon-192.png';
 
   // ================================================================ helpers
   function esc(v) { return String(v === undefined || v === null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -68,6 +68,7 @@
     store: '<path d="M10 3h4v4h4v4h-4v4h-4v-4H6V7h4z"/>', expenses: '<path d="M4 5h16v14H4zM4 9h16M8 14h4"/>',
     profit: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>', settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
     report: '<path d="M6 2h9l4 4v16H6zM14 2v5h5M9 12h7M9 16h7M9 8h3"/>',
+    history: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'
   };
   function icon(n) { return '<svg viewBox="0 0 24 24" aria-hidden="true">' + (ICON[n] || '') + '</svg>'; }
@@ -75,10 +76,10 @@
   // ================================================================ who can see what
   var NAV = {
     owner: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['sale-new', 'New sale', 'sale'], ['customers', 'Customers', 'customers'],
-      ['crates', 'Crates out', 'crates'], ['feed', 'Feed', 'feed'], ['store', 'Medicine', 'store'], ['expenses', 'Expenses', 'expenses'], ['profit', 'Profit', 'profit'], ['report', 'Monthly report', 'report'], ['settings', 'Settings', 'settings']],
-    manager: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['crates', 'Crates out', 'crates'], ['feed', 'Feed', 'feed'], ['store', 'Medicine', 'store'], ['settings', 'Settings', 'settings']],
-    sales: [['home', 'Home', 'home'], ['sale-new', 'New sale', 'sale'], ['customers', 'Customers', 'customers'], ['crates', 'My eggs', 'crates'], ['tasks', 'Emergency', 'tasks'], ['settings', 'Settings', 'settings']],
-    farmhand: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['settings', 'Settings', 'settings']]
+      ['crates', 'Crates out', 'crates'], ['feed', 'Feed', 'feed'], ['store', 'Medicine', 'store'], ['expenses', 'Expenses', 'expenses'], ['profit', 'Profit', 'profit'], ['report', 'Monthly report', 'report'], ['history', 'History', 'history'], ['settings', 'Settings', 'settings']],
+    manager: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['crates', 'Crates out', 'crates'], ['feed', 'Feed', 'feed'], ['store', 'Medicine', 'store'], ['history', 'History', 'history'], ['settings', 'Settings', 'settings']],
+    sales: [['home', 'Home', 'home'], ['sale-new', 'New sale', 'sale'], ['customers', 'Customers', 'customers'], ['crates', 'My eggs', 'crates'], ['tasks', 'Emergency', 'tasks'], ['history', 'My history', 'history'], ['settings', 'Settings', 'settings']],
+    farmhand: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['history', 'History', 'history'], ['settings', 'Settings', 'settings']]
   };
   var ALLOW = {
     'flock-new': ['owner', 'manager'], 'flock-close': ['owner'], daily: ['owner', 'manager', 'farmhand'], 'daily-edit': ['owner'],
@@ -87,7 +88,8 @@
     crates: ['owner', 'manager', 'sales'], 'crates-out': ['owner', 'manager'], 'crates-return': ['owner', 'manager'], 'crates-adjust': ['owner'],
     feed: ['owner', 'manager'], 'feed-buy': ['owner', 'manager'], 'feed-mix': ['owner', 'manager'],
     store: ['owner', 'manager'], 'med-in': ['owner', 'manager'], 'med-use': ['owner', 'manager'],
-    expenses: ['owner'], 'expense-new': ['owner'], profit: ['owner'], report: ['owner'], set: ['owner'], 'flock-edit': ['owner']
+    history: ['owner', 'manager', 'sales', 'farmhand'],
+    expenses: ['owner'], 'expense-new': ['owner'], profit: ['owner'], report: ['owner'], set: ['owner'], 'flock-edit': ['owner'], 'start-fresh': ['owner']
   };
   function seesMoney() { return isRole('owner', 'sales'); }
 
@@ -191,11 +193,13 @@
     var t = today(), s = st(), u = me();
     var hour = new Date().getHours(), hi = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
     if (role() === 'sales') { var dd = C.dashboard(s, t); return head(hi + ', ' + u.name, dLong(t) + ' · ' + esc(u.role)) + salesHome(t, dd); }
-    mode = mode === 'month' || mode === 'year' ? mode : 'day';
+    mode = mode === 'month' || mode === 'year' || mode === 'week' ? mode : 'day';
     var day = mode === 'day' && v && v <= t ? v : t, month = mode === 'month' && v ? v : C.monthOf(t), year = mode === 'year' && v ? v : t.slice(0, 4);
-    var title = mode === 'day' ? (day === t ? hi + ', ' + u.name : dLong(day)) : mode === 'month' ? monthName(month) : 'Year ' + year;
+    var wk = C.weekStart(mode === 'week' && v ? v : t);
+    var title = mode === 'day' ? (day === t ? hi + ', ' + u.name : dLong(day)) : mode === 'week' ? 'Week of ' + dShort(wk) + ' – ' + dShort(C.addDays(wk, 6)) + ' ' + C.addDays(wk, 6).slice(0, 4) : mode === 'month' ? monthName(month) : 'Year ' + year;
     var out = head(title, (mode === 'day' && day === t ? dLong(t) + ' · ' : '') + esc(u.role), nextCollection());
-    out += periodBar(mode, day, month, year);
+    out += periodBar(mode, day, month, year, wk);
+    if (mode === 'week') return out + weekHome(wk);
     if (mode === 'month') return out + monthHome(month);
     if (mode === 'year') return out + yearHome(year);
     return out + dayHome(day);
@@ -207,16 +211,36 @@
     var next = times.map(function (x) { var p = x.split(/[:.]/); return { t: pad(+p[0]) + ':' + p[1], m: +p[0] * 60 + +p[1] }; }).sort(function (a, b) { return a.m - b.m; }).filter(function (x) { return x.m >= mins; })[0];
     return '<span class="chip yellow" style="font-size:12px;padding:6px 10px">🥚 Next egg collection: ' + (next ? next.t : 'tomorrow ' + times[0]) + '</span>';
   }
-  function periodBar(mode, day, month, year) {
-    var t = today(), years = []; for (var y = +t.slice(0, 4); y >= 2024; y--) years.push(String(y));
+  function periodBar(mode, day, month, year, wk) {
+    // years: 5 ahead of this year, back to 2024 (and back to the first record if older)
+    var t = today(), first = +(firstRecordDate() || t).slice(0, 4), years = [];
+    for (var y = +t.slice(0, 4) + 5; y >= Math.min(2024, first); y--) years.push(String(y));
+    if (years.indexOf(String(year)) < 0) years.unshift(String(year));
     var pill = function (m, l, href) { return '<a class="pill ' + (mode === m ? 'on' : '') + '" href="#' + href + '" style="display:inline-flex;align-items:center;text-decoration:none;color:inherit">' + l + '</a>'; };
     var pick = mode === 'day' ? '<input type="date" value="' + day + '" max="' + t + '" data-act-change="homePick" data-mode="day" aria-label="Choose a day" style="min-height:40px;width:auto">'
-      : mode === 'month' ? '<input type="month" value="' + month + '" max="' + C.monthOf(t) + '" data-act-change="homePick" data-mode="month" aria-label="Choose a month" style="min-height:40px;width:auto">'
+      : mode === 'week' ? '<a class="btn light sm" href="#home/week/' + C.addDays(wk, -7) + '" aria-label="Week before">‹</a><input type="date" value="' + wk + '" data-act-change="homePick" data-mode="week" aria-label="Choose any day in the week" style="min-height:40px;width:auto"><a class="btn light sm" href="#home/week/' + C.addDays(wk, 7) + '" aria-label="Next week">›</a>'
+      : mode === 'month' ? '<input type="month" value="' + month + '" min="2024-01" max="' + (+t.slice(0, 4) + 5) + '-12" data-act-change="homePick" data-mode="month" aria-label="Choose a month" style="min-height:40px;width:auto">'
       : '<select data-act-change="homePick" data-mode="year" aria-label="Choose a year" style="min-height:40px;width:auto">' + years.map(function (y) { return opt(y, y, year); }).join('') + '</select>';
-    return '<div class="row" style="margin-bottom:12px;gap:8px">' + pill('day', 'Day', 'home') + pill('month', 'Month', 'home/month/' + C.monthOf(t)) + pill('year', 'Year', 'home/year/' + t.slice(0, 4)) + pick +
+    return '<div class="row" style="margin-bottom:12px;gap:8px">' + pill('day', 'Day', 'home') + pill('week', 'Week', 'home/week/' + C.weekStart(t)) + pill('month', 'Month', 'home/month/' + C.monthOf(t)) + pill('year', 'Year', 'home/year/' + t.slice(0, 4)) + pick +
       (mode === 'day' && day !== t ? '<a class="btn light sm" href="#home">Back to today</a>' : '') + '</div>';
   }
-  ACT.homePick = function (el) { if (el.value) go('home/' + el.dataset.mode + '/' + el.value); };
+  ACT.homePick = function (el) { if (el.value) go('home/' + el.dataset.mode + '/' + (el.dataset.mode === 'week' ? C.weekStart(el.value) : el.value)); };
+  function firstRecordDate() {
+    var s = st(), min = '';
+    ['daily', 'sales', 'payments', 'feed', 'med', 'expenses', 'stock'].forEach(function (k) { live(s[k]).forEach(function (x) { if (x.date && (!min || x.date < min)) min = x.date; }); });
+    return min;
+  }
+  function weekHome(wk) {
+    var s = st(), t = today(), end = C.addDays(wk, 6);
+    if (wk > t) return '<div class="empty">This week has not come yet. Records will show here when the days come.</div>';
+    var p = C.periodSummary(s, wk, end > t ? t : end), T = p.total, money = seesMoney();
+    var k = [kpiBox('Eggs collected', crates(T.eggs), T.layRate + '% average lay', 'dark'), kpiBox('Deaths & culls', String(T.deaths), T.records + ' daily records')];
+    if (money) { k.push(kpiBox('Sales', cur(T.salesCents), T.sales + ' sales', 'gold')); k.push(kpiBox('Money received', cur(T.receivedCents), cur(T.debtPaidCents) + ' from old debts')); }
+    if (isRole('owner')) k.push(kpiBox('Expenses', cur(T.expensesCents), ''));
+    var out = '<div class="grid g2 g4-md">' + k.join('') + '</div>';
+    out += '<a class="btn light sm" style="margin-top:12px" href="#history/week/' + wk + '">Every entry made this week →</a>';
+    return out + historyTable(p, 'Day by day', false);
+  }
   function dayHome(t) {
     var s = st(), d = C.dashboard(s, t), isToday = t === today();
     var out = isToday ? alertsBlock(t, d) : '';
@@ -230,8 +254,8 @@
     if (isToday) k.push(kpiBox('Tasks', d.tasks.overdue + ' overdue', d.tasks.today + ' today · ' + d.tasks.soon + ' soon', '', d.tasks.overdue ? 'red' : ''));
     out += '<div class="grid g2 g4-md">' + k.join('') + '</div>';
     var bars = coops().map(function (c) {
-      var f = C.flockInCoop(s, c, t), rec = f && live(s.daily).filter(function (x) { return x.flockId === f.id && x.date === t; })[0];
-      return { c: c, v: rec ? C.dailyEggs(s, rec).total : 0, f: f, rec: rec };
+      var f = C.flockInCoop(s, c, t), dt = f ? C.dayTotal(s, f.id, t) : null, rec = dt && dt.count ? dt : null;
+      return { c: c, v: rec ? rec.total : 0, f: f, rec: rec };
     });
     var max = Math.max.apply(null, bars.map(function (b) { return b.v; }).concat([1]));
     out += '<div class="card stack" style="margin-top:12px"><div class="row between"><h2>Eggs per coop ' + word + '</h2><span class="tiny muted">crates</span></div><div class="bars">' +
@@ -339,12 +363,12 @@
     out += '<div class="grid g2 g4-md">' + coops().map(function (c) {
       var f = C.flockInCoop(s, c, t);
       if (!f) return '<a class="card" style="text-decoration:none;color:inherit" href="#' + (isRole('owner', 'manager') ? 'flock-new/' + c : 'coops') + '"><h2>Coop ' + c + '</h2><p class="small muted">Empty</p>' + (isRole('owner', 'manager') ? '<span class="btn sm gold">Start new flock</span>' : '') + '</a>';
-      var a = C.flockAge(s, f, t), rec = live(s.daily).filter(function (x) { return x.flockId === f.id && x.date === t; })[0];
+      var a = C.flockAge(s, f, t), dt = C.dayTotal(s, f.id, t), rec = dt.count ? dt : null;
       var next = openTasks().filter(function (x) { return x.flockId === f.id || (x.coops || []).indexOf(c) >= 0; })[0];
       var nk = next ? C.taskStatus(next, t) : '';
       return '<a class="card stack" style="text-decoration:none;color:inherit;gap:6px" href="#coop/' + f.id + '"><div class="row between"><h2>Coop ' + c + '</h2>' + stageChip(a.stage) + '</div>' +
         '<div class="small muted">' + C.birdsAlive(s, f, t).toLocaleString() + ' birds · week ' + a.week + '</div>' +
-        '<div class="row between small"><span class="muted">Today</span><b class="' + (rec ? '' : 'red') + '">' + (rec ? crates(C.dailyEggs(s, rec).total) : 'No record') + '</b></div>' +
+        '<div class="row between small"><span class="muted">Today</span><b class="' + (rec ? '' : 'red') + '">' + (rec ? crates(rec.total) + (rec.count > 1 ? ' · ' + rec.count + ' collections' : '') : 'No record') + '</b></div>' +
         (next ? '<div class="tiny ' + (nk === 'overdue' ? 'red bold' : 'muted') + '">' + (nk === 'overdue' ? 'OVERDUE: ' : 'Next: ') + esc(next.title) + ' · ' + dShort(next.date) + '</div>' : '') + '</a>';
     }).join('') + '</div>';
     return out;
@@ -364,13 +388,13 @@
       : esc(f.breed || '') + ' · ' + C.int(f.chicks).toLocaleString() + ' day-old chicks · arrived ' + dLong(f.arrival);
     var out = back('coops', 'All coops') + head('Coop ' + f.coop + ' · Week ' + a.week, sub,
       '<div class="row">' + (isRole('owner') ? '<a class="btn light sm" href="#flock-edit/' + f.id + '">Edit age / stage</a>' : '') +
-      (f.status === 'active' && isRole('owner', 'manager', 'farmhand') ? '<a class="btn gold" href="#daily/' + f.id + '">Today’s record</a>' : '') + '</div>');
+      (f.status === 'active' && isRole('owner', 'manager', 'farmhand') ? '<a class="btn gold" href="#daily/' + f.id + '">' + (C.dayTotal(s, f.id, t).count ? '+ Another collection today' : 'Today’s record') + '</a>' : '') + '</div>');
     out += '<div class="card stack" style="gap:6px"><div class="stagebar"><span class="on"></span><span class="' + (w > set.broodingToWeek ? 'on' : '') + '"></span><span class="' + (w > set.growerToWeek ? 'on' : '') + '"></span><span class="' + (w > set.preLayToWeek ? 'on' : '') + '"></span></div>' +
       '<div class="stagebar tiny muted"><div>Brood</div><div>Growing (wk ' + (set.broodingToWeek + 1) + '–' + set.growerToWeek + ')</div><div>Pre-lay</div><div class="bold">Laying</div></div><div>' + stageChip(a.stage) + ' <span class="small muted">day ' + a.day + '</span></div></div>';
     out += '<div class="grid g2 g4-md" style="margin-top:12px">' + kpiBox('Alive', birds.toLocaleString(), '') +
       kpiBox('Died / culled', deaths.toLocaleString(), (f.chicks ? (Math.round(deaths / f.chicks * 1000) / 10) : 0) + '% of chicks') +
       kpiBox('Feed eaten', Math.round(feedKg).toLocaleString() + ' kg', Math.round(feedKg / set.kgPerBag) + ' bags') +
-      kpiBox('Eggs so far', crates(eggs), recs.length + ' daily records') + '</div>';
+      kpiBox('Eggs so far', crates(eggs), recs.length + ' records') + '</div>';
     if (isRole('owner')) {
       var L = C.flockLifetime(s, f, t);
       out += '<div class="card" style="margin-top:12px"><h2>Money for this flock (whole life)</h2>' + kv('Income', cur(L.incomeCents)) + kv('Running costs (feed, medicine, expenses)', cur(L.runningCostCents)) +
@@ -407,12 +431,13 @@
     function d(date) { return days[date] || (days[date] = []); }
     live(s.daily).forEach(function (x) {
       if (x.flockId !== f.id) return;
-      var e = C.dailyEggs(s, x), bits = ['<b>' + crates(e.good) + '</b> good eggs', e.cracked + ' cracked', C.layRate(s, x) + '% lay'];
+      var e = C.dailyEggs(s, x), bits = ['<b>' + crates(e.good) + '</b> good eggs', e.cracked + ' cracked', C.layRate(s, x) + '% lay (whole day)'];
       if (C.int(x.deaths)) bits.push('<span class="red">' + x.deaths + ' died</span>');
       if (C.int(x.culls)) bits.push(x.culls + ' culled');
       if (num(x.feedBags)) bits.push(num(x.feedBags) + ' bags ' + esc((item(x.feedItemId) || {}).name || 'feed'));
       if (num(x.water)) bits.push(num(x.water) + ' L water');
-      d(x.date).push(['Daily record', bits.join(' · ') + (x.notes ? '<div class="tiny muted">“' + esc(x.notes) + '” — ' + esc(userName(x.by)) + '</div>' : '<span class="tiny muted"> — ' + esc(userName(x.by)) + '</span>')]);
+      var sameDay = C.dayRecords(s, f.id, x.date), nth = C.sortChrono(sameDay).map(function (y) { return y.id; }).indexOf(x.id) + 1;
+      d(x.date).push([sameDay.length > 1 ? 'Collection ' + nth : 'Daily record', bits.join(' · ') + (x.notes ? '<div class="tiny muted">“' + esc(x.notes) + '” — ' + esc(userName(x.by)) + '</div>' : '<span class="tiny muted"> — ' + esc(userName(x.by)) + '</span>')]);
     });
     live(s.tasks).forEach(function (x) {
       if (x.status === 'open' || !x.doneAt || x.doneNote === 'Before the app was used') return;
@@ -574,7 +599,7 @@
       '<div class="grid g2"><label>Coop<select name="flockId">' + flocks.map(function (f) { return opt(f.id, 'Coop ' + f.coop + ' · ' + C.flockAge(s, f, t).stage, fid); }).join('') + '</select></label>' +
       '<label>Date<input type="date" name="date" value="' + esc(r.date) + '" max="' + t + '" required></label></div>' +
       '<h3>Eggs collected</h3><div class="grid g3">' + n('goodCrates', 'Good · crates') + n('goodPieces', '+ loose pieces') + n('cracked', 'Cracked (pieces)') + '</div>' +
-      '<div class="alert ok small" id="dailyLive">Lay rate will show here</div>' +
+      '<div class="alert warn small" id="dailyBefore" hidden></div><div class="alert ok small" id="dailyLive">Lay rate will show here</div>' +
       '<h3>Birds</h3><div class="grid g2">' + n('deaths', 'Dead birds') + n('culls', 'Culled / removed') + '</div>' +
       '<h3>Feed &amp; water</h3><div class="grid g2"><label>Feed type<select name="feedItemId"><option value="">—</option>' + feeds.map(function (i) { return opt(i.id, i.name, r.feedItemId); }).join('') + '</select></label>' +
       n('feedBags', 'Feed used (bags)', 'decimal', '0.25') + '</div>' + n('water', 'Water (litres)', 'decimal', 'any') +
@@ -590,8 +615,10 @@
   }
   LIVE.daily = function (f) {
     var d = readDaily(f), fl = flock(d.flockId), box = document.getElementById('dailyLive'); if (!box || !fl) return;
-    var birds = C.birdsAtStartOf(st(), fl, d.date), e = C.dailyEggs(st(), d);
-    box.textContent = e.total ? ('Total ' + crates(e.total) + ' (' + e.total + ' eggs) from ' + birds.toLocaleString() + ' birds = ' + (birds ? Math.round(e.total / birds * 1000) / 10 : 0) + '% lay rate') : 'Lay rate will show here';
+    var birds = C.birdsAtStartOf(st(), fl, d.date), e = C.dailyEggs(st(), d), before = C.dayTotal(st(), d.flockId, d.date, d.id), bx = document.getElementById('dailyBefore');
+    if (bx) { bx.hidden = !before.count; bx.textContent = before.count ? 'Coop ' + fl.coop + ' already has ' + before.count + ' collection(s) on this day: ' + crates(before.total) + '. This one will be collection ' + (before.count + 1) + ' and is added to the day.' : ''; }
+    var all = before.total + e.total;
+    box.textContent = e.total ? ((before.count ? 'Day total ' : 'Total ') + crates(all) + ' (' + all + ' eggs) from ' + birds.toLocaleString() + ' birds = ' + (birds ? Math.round(all / birds * 1000) / 10 : 0) + '% lay rate') : 'Lay rate will show here';
   };
   FORMS.daily = function (f) {
     var d = readDaily(f), v = C.validateDaily(st(), d), fl = flock(d.flockId);
@@ -600,10 +627,11 @@
       if (fsx && fsx.tracked && need > fsx.kg + 1e-9) v.warnings.push('The feed store shows only ' + fsx.bags + ' bags of ' + item(d.feedItemId).name + '. Record the feed bought or mixed first, so its cost is counted correctly.');
     }
     var feedTxt = d.feedBags ? d.feedBags + ' bags · ' + esc((item(d.feedItemId) || {}).name || '') : '—';
-    preview({ title: 'Coop ' + (fl ? fl.coop : '') + ' · ' + dLong(d.date), errors: v.errors, warnings: v.warnings,
-      rows: [['Good eggs', d.goodCrates + ' crates + ' + d.goodPieces + ' pieces'], ['Cracked eggs', d.cracked + ' pieces'], ['Total', crates(v.eggs ? v.eggs.total : 0)],
-        ['Lay rate', (v.layRate || 0) + '%'], ['Dead / culled', d.deaths + ' / ' + d.culls + (v.birdsAfter !== undefined ? ' (birds now ' + v.birdsAfter + ')' : '')],
-        ['Feed', feedTxt], ['Water', d.water ? d.water + ' L' : '—'], ['Notes', esc(d.notes || '—')]],
+    preview({ title: 'Coop ' + (fl ? fl.coop : '') + ' · ' + dLong(d.date) + (v.round > 1 ? ' · collection ' + v.round : ''), errors: v.errors, warnings: v.warnings,
+      rows: [['Good eggs', d.goodCrates + ' crates + ' + d.goodPieces + ' pieces'], ['Cracked eggs', d.cracked + ' pieces'], ['Total', crates(v.eggs ? v.eggs.total : 0)]]
+        .concat(v.round > 1 ? [['Day total (all collections)', crates(v.dayEggs)]] : []).concat([
+        ['Lay rate' + (v.round > 1 ? ' (whole day)' : ''), (v.layRate || 0) + '%'], ['Dead / culled', d.deaths + ' / ' + d.culls + (v.birdsAfter !== undefined ? ' (birds now ' + v.birdsAfter + ')' : '')],
+        ['Feed', feedTxt], ['Water', d.water ? d.water + ' L' : '—'], ['Notes', esc(d.notes || '—')]]),
       extra: '<p class="tiny muted">After saving, only the owner can change this record. Every change is logged.</p>',
       onConfirm: async function () {
         delete d.today;
@@ -947,12 +975,12 @@
   routes['customer-new'] = function () { return customerForm(null); };
   routes['customer-edit'] = function (id) { return customerForm(cust(id)); };
   function customerForm(c) {
-    var owner = isRole('owner'); c = c || { priceType: 'retail', credit: false, limit: 0, opening: 0 };
+    var owner = isRole('owner'); c = c || { priceType: 'retail', credit: setting('newCustomerCredit', 'no') === 'yes', limit: setting('newCustomerCredit', 'no') === 'yes' ? num(setting('newCustomerLimit', 0)) : 0, opening: 0 };
     return back(c.id ? 'customer/' + c.id : 'customers', c.id ? c.name : 'Customers') + head(c.id ? 'Edit customer' : 'New customer', owner ? '' : 'The owner decides credit and wholesale prices for each customer.') +
       '<form class="card" data-form="customer"' + (c.id ? ' data-id="' + esc(c.id) + '"' : '') + '><label>Name<input name="name" required value="' + esc(c.name || '') + '"></label>' +
       '<label>Phone (for WhatsApp receipts)<input name="phone" type="tel" inputmode="tel" value="' + esc(c.phone || '') + '" placeholder="024 123 4567"></label>' +
       (owner ? '<div class="grid g2"><label>Prices<select name="priceType">' + opt('retail', 'Retail', c.priceType) + opt('wholesale', 'Wholesale', c.priceType) + '</select></label>' +
-        '<label>Payment<select name="credit">' + opt('no', 'Cash only', c.credit ? 'yes' : 'no') + opt('yes', 'Credit allowed', c.credit ? 'yes' : 'no') + '</select></label></div>' +
+        '<label>Payment<select name="credit">' + opt('no', 'Cash only (must pay in full)', c.credit ? 'yes' : 'no') + opt('yes', 'Part payment / credit allowed', c.credit ? 'yes' : 'no') + '</select></label></div>' +
         '<div class="grid g2"><label>Credit limit (GH₵, 0 = no limit)<input name="limit" type="number" min="0" step="0.01" inputmode="decimal" value="' + esc(c.limit || 0) + '"></label>' +
         '<label>Opening balance owed (GH₵)<input name="opening" type="number" step="0.01" inputmode="decimal" value="' + esc(c.opening || 0) + '"></label></div>' : '') +
       '<label>Notes<input name="notes" value="' + esc(c.notes || '') + '" placeholder="e.g. shop at Madina market"></label><button class="btn" type="submit">Next: preview →</button></form>';
@@ -961,7 +989,7 @@
     var owner = isRole('owner'), old = f.dataset.id ? cust(f.dataset.id) : null;
     var rec = Object.assign({}, old || {}, { type: 'customers', name: val(f, 'name').trim(), phone: val(f, 'phone').trim(), notes: val(f, 'notes').trim() });
     if (owner) { rec.priceType = val(f, 'priceType'); rec.credit = val(f, 'credit') === 'yes'; rec.limit = num(val(f, 'limit')); rec.opening = num(val(f, 'opening')); }
-    else if (!old) { rec.priceType = 'retail'; rec.credit = false; rec.limit = 0; rec.opening = 0; }
+    else if (!old) { rec.priceType = 'retail'; rec.credit = setting('newCustomerCredit', 'no') === 'yes'; rec.limit = rec.credit ? num(setting('newCustomerLimit', 0)) : 0; rec.opening = 0; }
     var errors = [], warnings = [];
     if (!rec.name) errors.push('Enter the customer’s name.');
     var digits = rec.phone.replace(/\D/g, '');
@@ -1299,6 +1327,138 @@
     return out;
   };
 
+  // ================================================================ HISTORY — every entry, by day / week / month, by person
+  var HCATS = [['all', 'Everything'], ['eggs', 'Eggs & birds'], ['tasks', 'Tasks & emergencies'], ['feed', 'Feed'], ['med', 'Medicine'], ['crates', 'Crates out / returns'],
+    ['sales', 'Sales'], ['payments', 'Debt payments'], ['customers', 'Customers'], ['expenses', 'Expenses'], ['flocks', 'Coops / flocks']];
+  function histCats() {
+    var r = role();
+    if (r === 'owner') return HCATS;
+    if (r === 'sales') return HCATS.filter(function (c) { return ['all', 'sales', 'payments', 'customers', 'crates', 'tasks'].indexOf(c[0]) >= 0; });
+    var ok = r === 'manager' ? ['all', 'eggs', 'tasks', 'feed', 'med', 'crates', 'flocks'] : ['all', 'eggs', 'tasks', 'feed', 'med', 'flocks'];
+    return HCATS.filter(function (c) { return ok.indexOf(c[0]) >= 0; });
+  }
+  function timeOf(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function allEntries() {
+    var s = st(), out = [], money = seesMoney(), owner = isRole('owner');
+    function add(cat, date, by, at, text, href, rec) {
+      var edited = rec && rec.createdAt && rec.updatedAt && (rec.updatedAt - Date.parse(rec.createdAt) > 60000) && !rec._dirty;
+      out.push({ cat: cat, date: date, by: by || '', at: at || '', text: text, href: href || '', edited: !!edited });
+    }
+    live(s.daily).forEach(function (x) {
+      var e = C.dailyEggs(s, x), fl = flock(x.flockId) || {}, n = C.dayRecords(s, x.flockId, x.date).length;
+      var bits = [crates(e.good) + ' good', e.cracked + ' cracked'];
+      if (C.int(x.deaths)) bits.push(x.deaths + ' died'); if (C.int(x.culls)) bits.push(x.culls + ' culled');
+      if (num(x.feedBags)) bits.push(num(x.feedBags) + ' bags feed');
+      add('eggs', x.date, x.by, x.createdAt, '<b>Coop ' + esc(fl.coop || x.coop) + '</b> ' + (n > 1 ? 'collection' : 'daily record') + ': ' + bits.join(' · ') + (x.notes ? ' <span class="tiny muted">“' + esc(x.notes) + '”</span>' : ''), (fl.id ? 'coop/' + fl.id : ''), x);
+    });
+    live(s.tasks).forEach(function (x) {
+      if (x.kind === 'Emergency') add('tasks', x.date, x.by, x.createdAt, '<span class="red bold">Emergency reported</span> · ' + esc(whereText(x)) + ': ' + esc(x.title), 'task/' + x.id, x);
+      else if (!x.auto && x.by) add('tasks', String(x.createdAt || '').slice(0, 10) || x.date, x.by, x.createdAt, 'New task added: ' + esc(x.kind) + ' · ' + esc(x.title) + ' · due ' + dShort(x.date), 'task/' + x.id);
+      if (x.status !== 'open' && x.doneAt && x.doneBy && x.doneNote !== 'Before the app was used')
+        add('tasks', x.doneAt, x.doneBy, '', (x.kind === 'Emergency' ? 'Emergency handled' : 'Task done') + ': ' + chipFor(x.kind) + ' ' + esc(x.title) + ' · ' + esc(whereText(x)) + (x.doneNote ? ' <span class="tiny muted">“' + esc(x.doneNote) + '”</span>' : ''), 'task/' + x.id);
+    });
+    live(s.feed).forEach(function (x) {
+      if (x.kind === 'buy') add('feed', x.date, x.by, x.createdAt, 'Feed bought: ' + num(x.qty) + ' ' + esc(x.qtyUnit) + ' ' + esc((item(x.itemId) || {}).name || '') + (owner || money ? ' · ' + curN(x.cost) : '') + (x.supplier ? ' · ' + esc(x.supplier) : ''), 'feed', x);
+      else if (x.kind === 'mix') add('feed', x.date, x.by, x.createdAt, 'Feed mixed: ' + (x.lines || []).reduce(function (a, l) { return a + num(l.kg); }, 0) + ' kg of ' + esc((item(x.outputItemId) || {}).name || ''), 'feed', x);
+      else add('feed', x.date, x.by, x.createdAt, 'Feed stock change: ' + esc((item(x.itemId) || {}).name || ''), 'feed', x);
+    });
+    live(s.med).forEach(function (x) {
+      var it = item(x.itemId) || {};
+      if (x.kind === 'in') add('med', x.date, x.by, x.createdAt, 'Medicine bought: ' + num(x.qty) + ' ' + esc(it.unit || '') + ' ' + esc(it.name || '') + (owner ? ' · ' + curN(x.cost) : '') + (x.expiry ? ' · expires ' + dShort(x.expiry) : ''), 'store', x);
+      else if (x.kind === 'use') add('med', x.date, x.by, x.createdAt, 'Medicine used: ' + num(x.qty) + ' ' + esc(it.unit || '') + ' ' + esc(it.name || '') + (x.coop ? ' · Coop ' + esc(x.coop) : '') + (x.note ? ' <span class="tiny muted">“' + esc(x.note) + '”</span>' : ''), 'store', x);
+      else add('med', x.date, x.by, x.createdAt, 'Medicine stock change: ' + esc(it.name || ''), 'store', x);
+    });
+    live(s.stock).forEach(function (x) {
+      var who = x.salesUserId ? userName(x.salesUserId) : '';
+      var txt = x.kind === 'out' ? 'Eggs given to ' + esc(who) : x.kind === 'return' ? 'Eggs returned by ' + esc(who) : 'Egg store corrected: ' + (x.pieces > 0 ? '+' : '') + C.int(x.pieces) + ' ' + esc(x.eggKind || '') + (x.reason ? ' · ' + esc(x.reason) : '');
+      if (x.kind === 'out' || x.kind === 'return') txt += ': ' + stockLinesText(x) + (C.int(x.brokenGood) || C.int(x.brokenCracked) ? ' · broken ' + (C.int(x.brokenGood) + C.int(x.brokenCracked)) : '');
+      add('crates', x.date, x.by, x.createdAt, txt, 'crates', x);
+      out[out.length - 1].forUser = x.salesUserId || '';
+    });
+    live(s.sales).forEach(function (x) {
+      var tt = C.saleTotals(x), c = cust(x.customerId) || {};
+      add('sales', x.date, x.by, x.createdAt, 'Sale ' + esc(x.receiptNo || '') + ' to <b>' + esc(c.name || '') + '</b> · ' + cur(tt.totalCents) + ' · paid ' + cur(tt.paidCents) + (tt.totalCents > tt.paidCents ? ' · <span class="red">owes ' + cur(tt.totalCents - tt.paidCents) + '</span>' : ''), 'receipt/' + x.id, x);
+    });
+    live(s.payments).forEach(function (x) {
+      add('payments', x.date, x.by, x.createdAt, 'Debt payment from <b>' + esc((cust(x.customerId) || {}).name || '') + '</b> · ' + curN(x.amount) + ' ' + esc(x.method || ''), 'preceipt/' + x.id, x);
+    });
+    live(s.customers).forEach(function (x) {
+      add('customers', String(x.createdAt || '').slice(0, 10), x.by, x.createdAt, 'New customer: <b>' + esc(x.name) + '</b>' + (x.phone ? ' · ' + esc(x.phone) : '') + ' · ' + (x.credit ? 'part payment allowed' : 'cash only'), 'customer/' + x.id, x);
+    });
+    live(s.expenses).forEach(function (x) {
+      add('expenses', x.date, x.by, x.createdAt, 'Expense: ' + esc(x.category || '') + ' · ' + curN(x.amount) + (C.int(x.coop) ? ' · Coop ' + x.coop : ' · whole farm') + (x.note ? ' <span class="tiny muted">“' + esc(x.note) + '”</span>' : ''), 'expenses/' + String(x.date).slice(0, 7), x);
+    });
+    live(s.flocks).forEach(function (x) {
+      add('flocks', String(x.createdAt || '').slice(0, 10) || x.arrival, x.by, x.createdAt, 'Flock started in <b>Coop ' + esc(x.coop) + '</b>: ' + C.int(x.chicks).toLocaleString() + ' birds' + (x.breed ? ' · ' + esc(x.breed) : ''), 'coop/' + x.id, x);
+      if (x.status === 'closed' && x.closedOn) add('flocks', x.closedOn, x.closedBy || x.by, '', 'Flock closed in Coop ' + esc(x.coop), 'coop/' + x.id);
+    });
+    var cats = histCats().map(function (c) { return c[0]; }), r = role(), uid = me().id;
+    return out.filter(function (e) {
+      if (!e.date || cats.indexOf(e.cat) < 0) return false;
+      if (r === 'sales') return e.by === uid || e.forUser === uid;
+      return true;
+    });
+  }
+  function stockLinesText(x) {
+    var p = 0, cr = 0;
+    (x.lines || []).forEach(function (l) { var e = C.lineEggs(st(), l); p += C.int(e.good); cr += C.int(e.cracked); });
+    return crates(p) + ' good' + (cr ? ' + ' + cr + ' cracked' : '');
+  }
+  routes.history = function (mode, date, who, cat) {
+    var t = today(), r = role(), uid = me().id;
+    mode = ['day', 'week', 'month', 'all'].indexOf(mode) >= 0 ? mode : 'day';
+    date = /^\d{4}-\d{2}(-\d{2})?$/.test(date || '') ? date : t;
+    if (mode === 'month') date = date.slice(0, 7); else if (date.length === 7) date = date + '-01';
+    if (mode === 'week') date = C.weekStart(date);
+    who = r === 'sales' ? 'me' : (who || 'all'); cat = cat || 'all';
+    var from = mode === 'day' ? date : mode === 'week' ? date : mode === 'month' ? date + '-01' : '0000';
+    var to = mode === 'day' ? date : mode === 'week' ? C.addDays(date, 6) : mode === 'month' ? C.lastDayOfMonth(date) : '9999';
+    var base = allEntries().filter(function (e) {
+      var u = who === 'me' ? uid : who;
+      if (who !== 'all' && e.by !== u) return false;
+      return cat === 'all' || e.cat === cat;
+    });
+    var list = base.filter(function (e) { return e.date >= from && e.date <= to; });
+    list.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : (a.at < b.at ? 1 : a.at > b.at ? -1 : 0); });
+    var link = function (m, d, w, c) { return '#history/' + m + '/' + d + '/' + (w || who) + '/' + (c || cat); };
+    var pill = function (m, l, d) { return '<a class="pill ' + (mode === m ? 'on' : '') + '" href="' + link(m, d) + '" style="display:inline-flex;align-items:center;text-decoration:none;color:inherit">' + l + '</a>'; };
+    var step = mode === 'day' ? 1 : 7, prev, next;
+    if (mode === 'month') { prev = C.monthOf(C.addMonths(date + '-01', -1)); next = C.monthOf(C.addMonths(date + '-01', 1)); }
+    else { prev = C.addDays(date, -step); next = C.addDays(date, step); }
+    var title = mode === 'day' ? dLong(date) : mode === 'week' ? 'Week ' + dShort(from) + ' – ' + dShort(to) + ' ' + to.slice(0, 4) : mode === 'month' ? monthName(date) : 'All time';
+    var out = head(r === 'sales' ? 'My history' : 'History', 'Every entry, who made it and when' + (seesMoney() ? '' : ' · money is not shown'));
+    out += '<div class="row" style="gap:8px;margin-bottom:8px">' + pill('day', 'Day', mode === 'month' ? date + '-01' : date) + pill('week', 'Week', mode === 'month' ? date + '-01' : date) + pill('month', 'Month', date.slice(0, 7)) + pill('all', 'All', t) + '</div>';
+    if (mode !== 'all') out += '<div class="row" style="gap:8px;margin-bottom:8px"><a class="btn light sm" href="' + link(mode, prev) + '" aria-label="Before">‹</a>' +
+      (mode === 'month' ? '<input type="month" value="' + date + '" data-act-change="histPick" data-mode="month" aria-label="Choose a month" style="min-height:40px;width:auto">'
+        : '<input type="date" value="' + (mode === 'week' ? from : date) + '" data-act-change="histPick" data-mode="' + mode + '" aria-label="Choose a day" style="min-height:40px;width:auto">') +
+      '<a class="btn light sm" href="' + link(mode, next) + '" aria-label="After">›</a>' + ((mode === 'day' && date !== t) ? '<a class="btn light sm" href="' + link('day', t) + '">Today</a>' : '') + '</div>';
+    var people = live(st().users).filter(function (u) { return u.role !== 'owner' || r === 'owner'; });
+    out += '<div class="grid g2" style="margin-bottom:12px">' + (r === 'sales' ? '' : '<label class="small">Who<select data-act-change="histWho">' + opt('all', 'Everyone', who) + opt('me', 'Only my entries', who) +
+      (r === 'owner' ? people.filter(function (u) { return u.id !== uid; }).map(function (u) { return opt(u.id, u.name + ' · ' + u.role, who); }).join('') : '') + '</select></label>') +
+      '<label class="small">Type<select data-act-change="histCat">' + histCats().map(function (c) { return opt(c[0], c[1], cat); }).join('') + '</select></label></div>';
+    out += '<div class="card"><div class="row between"><h2>' + esc(title) + '</h2><span class="tiny muted">' + list.length + ' entr' + (list.length === 1 ? 'y' : 'ies') + '</span></div>';
+    if (!list.length) out += '<div class="empty">No entries ' + (mode === 'day' ? 'on this day' : 'in this period') + (who !== 'all' ? ' by ' + esc(who === 'me' ? 'you' : userName(who)) : '') + '.</div>';
+    var lastDate = '', shown = list.slice(0, 400);
+    shown.forEach(function (e) {
+      if (e.date !== lastDate && mode !== 'day') { out += '<div class="bold small" style="margin-top:12px;padding-top:8px;border-top:1px solid #F0ECE1"><a href="' + link('day', e.date) + '" style="color:inherit">' + dLong(e.date) + '</a></div>'; lastDate = e.date; }
+      out += '<div class="small" style="padding:7px 0;border-bottom:1px solid #F6F3EA;display:flex;gap:8px;align-items:flex-start">' +
+        '<span class="tiny muted" style="min-width:38px">' + (timeOf(e.at) || '') + '</span><div class="grow">' + (e.href ? '<a href="#' + e.href + '" style="color:inherit;text-decoration:none">' + e.text + '</a>' : e.text) +
+        '<div class="tiny muted">by ' + esc(userName(e.by) || '—') + (e.edited ? ' · <span class="red">changed later by the owner</span>' : '') + '</div></div></div>';
+    });
+    if (list.length > shown.length) out += '<div class="tiny muted" style="margin-top:8px">Showing the newest 400. Choose a shorter period to see the rest.</div>';
+    out += '</div>';
+    // every day that has entries (for this person / type) — tap one to open it
+    var days = {}; base.forEach(function (e) { days[e.date] = (days[e.date] || 0) + 1; });
+    var dl = Object.keys(days).sort().reverse();
+    out += '<div class="card" style="margin-top:12px"><h2>' + (who === 'me' ? 'Days you made entries' : who !== 'all' ? 'Days ' + esc(userName(who)) + ' made entries' : 'Days with entries') + '</h2>' +
+      (dl.length ? '<div class="pills" style="margin-top:6px">' + dl.slice(0, 120).map(function (d) { return '<a class="pill' + (mode === 'day' && d === date ? ' on' : '') + '" style="text-decoration:none;color:inherit;min-height:0;padding:6px 12px" href="' + link('day', d) + '">' + dShort(d) + (d.slice(0, 4) !== t.slice(0, 4) ? ' ' + d.slice(0, 4) : '') + ' · ' + days[d] + '</a>'; }).join('') + '</div>' +
+        (dl.length > 120 ? '<div class="tiny muted">Newest 120 days shown — use Month to go further back.</div>' : '') : '<div class="empty">No entries yet.</div>') + '</div>';
+    return out;
+  };
+  ACT.histPick = function (el) { if (!el.value) return; var p = (location.hash.slice(1).split('/')); go('history/' + el.dataset.mode + '/' + el.value + '/' + (p[3] || 'all') + '/' + (p[4] || 'all')); };
+  ACT.histWho = function (el) { var p = (location.hash.slice(1).split('/')); go('history/' + (p[1] || 'day') + '/' + (p[2] || today()) + '/' + el.value + '/' + (p[4] || 'all')); };
+  ACT.histCat = function (el) { var p = (location.hash.slice(1).split('/')); go('history/' + (p[1] || 'day') + '/' + (p[2] || today()) + '/' + (p[3] || 'all') + '/' + el.value); };
+
   // ================================================================ MONTHLY REPORT (owner) — same page Google emails as PDF on the 1st
   routes.report = function (m) {
     m = m || C.monthOf(today());
@@ -1336,8 +1496,35 @@
         (people.length ? people.map(function (u) { return '<button class="pill" type="button" data-act="viewAs" data-id="' + esc(u.id) + '">' + esc(u.name) + ' · ' + esc(u.role) + '</button>'; }).join('')
           : roles.map(function (r) { return '<button class="pill" type="button" data-act="viewAs" data-role="' + r[0] + '">' + r[1] + '</button>'; }).join('')) + '</div></div>';
     }
-    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v1.2 · data is kept on this device and in your Google Sheet.</p>';
+    if (realRole() === 'owner' && !S.viewAs && startFreshOn()) {
+      out += '<div class="card stack" style="margin-top:12px;border-color:#E7A08D"><h2>Start fresh</h2><p class="small muted" style="margin:0">Delete ALL records — coops, daily records, tasks, sales, payments, customers, crates, feed, medicine and expenses — on the Sheet and on every phone. Your settings, people, prices, items and schedule are kept. A backup copy of the Sheet is saved in Google Drive first.</p>' +
+        '<a class="btn red" href="#start-fresh">Start fresh…</a><p class="tiny muted" style="margin:0">This button switches itself off again after it is used.</p></div>';
+    }
+    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v1.4.1 · data is kept on this device and in your Google Sheet.</p>';
     return out;
+  };
+  function startFreshOn() { return String(setting('allowStartFresh', 'no')).trim().toLowerCase() === 'yes'; }
+  routes['start-fresh'] = function () {
+    if (realRole() !== 'owner' || S.viewAs) return '<div class="empty">Only the owner can do this.</div>';
+    if (!startFreshOn()) return back('settings', 'Settings') + '<div class="empty">Start fresh is switched off. To use it, set “Allow Start fresh button” to yes in Settings › Farm details.</div>';
+    var s = st(), n = function (t) { return live(s[t]).length; };
+    return back('settings', 'Settings') + head('Start fresh', 'Use this once, after testing, before real work begins.') +
+      '<div class="card">' + kv('Coops / flocks', n('flocks')) + kv('Daily records', n('daily')) + kv('Tasks', n('tasks')) + kv('Sales', n('sales')) + kv('Payments', n('payments')) +
+      kv('Customers', n('customers')) + kv('Crates out / returns', n('stock')) + kv('Feed records', n('feed')) + kv('Medicine records', n('med')) + kv('Expenses', n('expenses')) + '</div>' +
+      '<div class="alert err" style="margin-top:12px">All of the above will be <b>deleted for good</b> — in the Google Sheet and on every phone. Task alarms made by the app are removed from the calendar. <b>Kept:</b> farm details, people &amp; PINs, prices, feed &amp; medicine items, vaccination schedule, recipes, egg-collection alarms.</div>' +
+      '<div class="alert ok" style="margin-top:12px">🛟 Before deleting, a full copy of your Google Sheet is saved in Google Drive › <b>Egg Man Farms backups</b>. If the copy cannot be made, nothing is deleted.</div>' +
+      '<form class="card" data-form="startfresh" style="margin-top:12px"><label>Type DELETE to confirm<input name="confirm" autocomplete="off" autocapitalize="characters"></label>' +
+      '<label>Your owner PIN<input name="pin" type="password" inputmode="numeric" autocomplete="off"></label><button class="btn red" type="submit">Next: preview →</button></form>';
+  };
+  FORMS.startfresh = function (f) {
+    var txt = val(f, 'confirm').trim().toUpperCase(), pin = val(f, 'pin').trim(), errs = [];
+    if (txt !== 'DELETE') errs.push('Type the word DELETE in the box to confirm.');
+    if (!/^[0-9]{4,8}$/.test(pin)) errs.push('Type your owner PIN.');
+    preview({ title: 'Delete all records?', confirm: 'Yes, delete everything', doneMessage: 'Started fresh ✓ — backup saved in Drive, all records deleted',
+      errors: errs,
+      warnings: E.pending().length ? [E.pending().length + ' record(s) on this device are not synced yet — they will be deleted too.'] : [],
+      rows: [['Backup first', 'Drive › Egg Man Farms backups'], ['Deleted', 'all records, on the Sheet and every phone'], ['Kept', 'settings, people, prices, items, schedule'], ['After', 'the Start fresh button switches off']],
+      onConfirm: async function () { await E.startFresh('DELETE', pin); return 'home'; } });
   };
   ACT.viewAs = function (b) {
     var u = b.dataset.id ? byId(st().users, b.dataset.id) : null;
@@ -1354,6 +1541,7 @@
     ['receiptFooter', 'Last line on receipts'], ['ownerWhatsapp', 'Owner WhatsApp, e.g. 233241234567'], ['ownerEmail', 'Owner email (alerts & monthly report)'],
     ['reportEmails', 'Other emails for the monthly report (comma between)'],
     ['collectionTimes', 'Egg collection alarm times, e.g. 08:00, 12:00, 16:00'], ['alarmHour', 'Task alarm hour on the day (0–23)'], ['alarmEveningBefore', 'Reminder hour the evening before (0–23)'],
+    ['allowStartFresh', 'Allow Start fresh button (yes / no) — keep it “no”'], ['newCustomerCredit', 'New customers can pay part (yes / no)'], ['newCustomerLimit', 'Debt limit for new customers, GH₵ (0 = no limit)'],
     ['coops', 'Number of coops'], ['eggsPerCrate', 'Eggs in a crate'], ['kgPerBag', 'Kg in a feed bag']];
   function slug(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'x'; }
   function editorDef(table) {
@@ -1386,8 +1574,8 @@
     if (table === 'Settings') {
       return back('settings', 'Settings') + head('Farm details, receipts & alarms', 'Saved to the Settings tab of your Google Sheet') +
         '<form class="card" data-form="setsettings">' + SETTING_FIELDS.map(function (f) {
-          return '<label>' + esc(f[1]) + '<input name="' + f[0] + '" value="' + esc(s.settings[f[0]] === undefined ? '' : s.settings[f[0]]) + '"' + (/coops|eggsPerCrate|kgPerBag|alarm/.test(f[0]) ? ' inputmode="numeric"' : '') + '></label>';
-        }).join('') + '<div class="alert ok small">Egg collection times make a phone alarm every day at each time. The farm manager and farm hands with a Gmail in People get them too.</div>' +
+          return '<label>' + esc(f[1]) + '<input name="' + f[0] + '" value="' + esc(s.settings[f[0]] === undefined ? '' : s.settings[f[0]]) + '"' + (/coops|eggsPerCrate|kgPerBag|alarm|Limit/.test(f[0]) ? ' inputmode="numeric"' : '') + (f[0] === 'newCustomerCredit' || f[0] === 'allowStartFresh' ? ' placeholder="no"' : '') + '></label>';
+        }).join('') + '<div class="alert ok small">Part payment: “yes” lets salespeople add customers who can pay part and owe the rest. You can still change each customer on their page.</div><div class="alert ok small">Egg collection times make a phone alarm every day at each time. The farm manager and farm hands with a Gmail in People get them too.</div>' +
         '<button class="btn gold" type="submit">Next: preview →</button></form>';
     }
     var d = editorDef(table); if (!d) return '<div class="empty">Unknown setting.</div>';
@@ -1500,12 +1688,19 @@
     var keys = Object.keys(cur); SETTING_FIELDS.forEach(function (x) { if (keys.indexOf(x[0]) < 0) keys.push(x[0]); });
     keys.forEach(function (k) {
       var field = f.elements[k], v = field ? field.value.trim() : cur[k];
+      if ((k === 'newCustomerCredit' || k === 'allowStartFresh') && v) v = v.toLowerCase();
       rows.push({ key: k, value: v });
       if (field && String(cur[k] === undefined ? '' : cur[k]) !== v) changes.push([k, esc(String(cur[k] === undefined ? '' : cur[k]) || '—') + ' → <b>' + esc(v || '—') + '</b>']);
     });
     var times = val(f, 'collectionTimes').trim();
     if (times && !times.split(/[,;\s]+/).filter(Boolean).every(function (t) { return /^([01]?\d|2[0-3])[:.][0-5]\d$/.test(t); })) errors.push('Egg collection times must look like 08:00, 12:00, 16:00');
     ['coops', 'eggsPerCrate', 'kgPerBag'].forEach(function (k) { if (!(num(val(f, k)) > 0)) errors.push(k + ' must be a number above 0.'); });
+    var nc = val(f, 'newCustomerCredit').trim().toLowerCase();
+    if (nc && nc !== 'yes' && nc !== 'no') errors.push('"New customers can pay part" must be yes or no.');
+    var sf = val(f, 'allowStartFresh').trim().toLowerCase();
+    if (sf && sf !== 'yes' && sf !== 'no') errors.push('"Allow Start fresh button" must be yes or no.');
+    if (f.elements.newCustomerCredit) f.elements.newCustomerCredit.value = nc;
+    if (val(f, 'newCustomerLimit') !== '' && !(num(val(f, 'newCustomerLimit')) >= 0)) errors.push('Debt limit must be a number (0 = no limit).');
     ['alarmHour', 'alarmEveningBefore'].forEach(function (k) { var h = num(val(f, k)); if (val(f, k) !== '' && (h < 0 || h > 23)) errors.push(k + ' must be an hour from 0 to 23.'); });
     var wa = val(f, 'ownerWhatsapp').replace(/\D/g, '');
     var warnings = wa && wa.indexOf('233') !== 0 ? ['WhatsApp number should start with 233 (Ghana), e.g. 233241234567.'] : [];

@@ -182,12 +182,19 @@
     var sentAt = {}; sent.forEach(function (r) { sentAt[r.id] = r.updatedAt; });
     try {
       var res = await api({ action: 'sync', userId: Store.session.user.id, token: Store.session.token, since: Store.meta.since,
-        masterHash: Store.meta.masterHash, records: sent.map(function (r) { var c = Object.assign({}, r); delete c._dirty; return c; }) });
+        masterHash: Store.meta.masterHash, epoch: Store.meta.epoch || '', records: sent.map(function (r) { var c = Object.assign({}, r); delete c._dirty; return c; }) });
       if (!res.ok) {
         Store.meta.lastError = res.error || 'Sync failed';
         if (res.code === 'AUTH') { Store.session = null; await kvSet('session', null); Store.notices.push(res.error); }
         return;
       }
+      // The owner pressed "Start fresh": throw away this device's copy and reload from the Sheet.
+      if (res.epoch && Store.meta.epoch && res.epoch !== Store.meta.epoch) {
+        await wipeLocal(res.epoch);
+        Store.notices.push('The owner started fresh: old records were removed from this device.');
+        again = true; return;
+      }
+      if (res.epoch && !Store.meta.epoch) Store.meta.epoch = res.epoch;
       var changed = [];
       (res.accepted || []).forEach(function (id) {
         var r = Store.index[id];
@@ -218,6 +225,23 @@
     }
     if (again) return sync(true);
   }
+  async function wipeLocal(epoch) {
+    Object.keys(Store.index).forEach(function (id) { delete Store.index[id]; });
+    TYPES.forEach(function (t) { Store.state[t] = []; });
+    await tx('records', 'readwrite', function (s) { s.clear(); });
+    Store.meta.since = 0; Store.meta.epoch = epoch; Store.meta.lastError = '';
+    await kvSet('meta', Store.meta);
+    emit();
+  }
+  // Owner only: delete every record everywhere (settings are kept).
+  async function startFresh(confirmText, pin) {
+    if (!navigator.onLine) throw new Error('Starting fresh needs internet.');
+    var res = await api({ action: 'reset', userId: Store.session.user.id, token: Store.session.token, confirm: confirmText, pin: String(pin || '') });
+    if (!res.ok) throw new Error(res.error || 'Could not start fresh.');
+    await wipeLocal(res.epoch);
+    await sync(true);
+    return res;
+  }
   // Owner only, needs internet: replace one settings tab (Products, Users, Settings, Items, Schedule, Recipes).
   async function saveMaster(table, rows) {
     if (!navigator.onLine) throw new Error('Saving settings needs internet. Your other records still work offline.');
@@ -237,6 +261,6 @@
   async function fullRefresh() { Store.meta.since = 0; Store.meta.masterHash = ''; await kvSet('meta', Store.meta); return sync(true); }
 
   window.EggCore = { TYPES: TYPES, Store: Store, init: init, save: save, sync: sync, login: login, logout: logout, pending: pending,
-    configured: configured, fullRefresh: fullRefresh, saveMaster: saveMaster, useNewPin: useNewPin, uid: uid, sha256: sha256, kvGet: kvGet, kvSet: kvSet,
+    configured: configured, fullRefresh: fullRefresh, saveMaster: saveMaster, useNewPin: useNewPin, startFresh: startFresh, uid: uid, sha256: sha256, kvGet: kvGet, kvSet: kvSet,
     onChange: function (f) { Store.listeners.push(f); } };
 })();
