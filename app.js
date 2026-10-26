@@ -69,6 +69,8 @@
     profit: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>', settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
     report: '<path d="M6 2h9l4 4v16H6zM14 2v5h5M9 12h7M9 16h7M9 8h3"/>',
     history: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    alarm: '<circle cx="12" cy="13" r="7"/><path d="M12 10v3l2 2M5 4L2 7M19 4l3 3"/>',
+    summary: '<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',
     more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'
   };
   function icon(n) { return '<svg viewBox="0 0 24 24" aria-hidden="true">' + (ICON[n] || '') + '</svg>'; }
@@ -76,10 +78,10 @@
   // ================================================================ who can see what
   var NAV = {
     owner: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['sale-new', 'New sale', 'sale'], ['customers', 'Customers', 'customers'],
-      ['crates', 'Crates out', 'crates'], ['feed', 'Feed', 'feed'], ['store', 'Medicine', 'store'], ['expenses', 'Expenses', 'expenses'], ['profit', 'Profit', 'profit'], ['report', 'Monthly report', 'report'], ['history', 'History', 'history'], ['settings', 'Settings', 'settings']],
-    manager: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['crates', 'Crates out', 'crates'], ['feed', 'Feed', 'feed'], ['store', 'Medicine', 'store'], ['history', 'History', 'history'], ['settings', 'Settings', 'settings']],
-    sales: [['home', 'Home', 'home'], ['sale-new', 'New sale', 'sale'], ['customers', 'Customers', 'customers'], ['crates', 'My eggs', 'crates'], ['tasks', 'Emergency', 'tasks'], ['history', 'My history', 'history'], ['settings', 'Settings', 'settings']],
-    farmhand: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['history', 'History', 'history'], ['settings', 'Settings', 'settings']]
+      ['crates', 'Crates out', 'crates'], ['feed', 'Feed', 'feed'], ['store', 'Medicine', 'store'], ['expenses', 'Expenses', 'expenses'], ['profit', 'Profit', 'profit'], ['report', 'Monthly report', 'report'], ['summary', 'Daily summary', 'summary'], ['history', 'History', 'history'], ['alarms', 'Alarms', 'alarm'], ['settings', 'Settings', 'settings']],
+    manager: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['crates', 'Crates out', 'crates'], ['feed', 'Feed', 'feed'], ['store', 'Medicine', 'store'], ['summary', 'Daily summary', 'summary'], ['history', 'History', 'history'], ['alarms', 'Alarms', 'alarm'], ['settings', 'Settings', 'settings']],
+    sales: [['home', 'Home', 'home'], ['sale-new', 'New sale', 'sale'], ['customers', 'Customers', 'customers'], ['crates', 'My eggs', 'crates'], ['tasks', 'Emergency', 'tasks'], ['history', 'My history', 'history'], ['alarms', 'Alarms', 'alarm'], ['settings', 'Settings', 'settings']],
+    farmhand: [['home', 'Home', 'home'], ['coops', 'Coops', 'coops'], ['tasks', 'Tasks', 'tasks'], ['summary', 'Daily summary', 'summary'], ['history', 'History', 'history'], ['alarms', 'Alarms', 'alarm'], ['settings', 'Settings', 'settings']]
   };
   var ALLOW = {
     'flock-new': ['owner', 'manager'], 'flock-close': ['owner'], daily: ['owner', 'manager', 'farmhand'], 'daily-edit': ['owner'],
@@ -88,7 +90,7 @@
     crates: ['owner', 'manager', 'sales'], 'crates-out': ['owner', 'manager'], 'crates-return': ['owner', 'manager'], 'crates-adjust': ['owner'],
     feed: ['owner', 'manager'], 'feed-buy': ['owner', 'manager'], 'feed-mix': ['owner', 'manager'],
     store: ['owner', 'manager'], 'med-in': ['owner', 'manager'], 'med-use': ['owner', 'manager'],
-    history: ['owner', 'manager', 'sales', 'farmhand'],
+    history: ['owner', 'manager', 'sales', 'farmhand'], summary: ['owner', 'manager', 'farmhand'],
     expenses: ['owner'], 'expense-new': ['owner'], profit: ['owner'], report: ['owner'], set: ['owner'], 'flock-edit': ['owner'], 'start-fresh': ['owner']
   };
   function seesMoney() { return isRole('owner', 'sales'); }
@@ -238,7 +240,7 @@
     if (money) { k.push(kpiBox('Sales', cur(T.salesCents), T.sales + ' sales', 'gold')); k.push(kpiBox('Money received', cur(T.receivedCents), cur(T.debtPaidCents) + ' from old debts')); }
     if (isRole('owner')) k.push(kpiBox('Expenses', cur(T.expensesCents), ''));
     var out = '<div class="grid g2 g4-md">' + k.join('') + '</div>';
-    out += '<a class="btn light sm" style="margin-top:12px" href="#history/week/' + wk + '">Every entry made this week →</a>';
+    out += '<div class="row" style="gap:8px;margin-top:12px"><a class="btn light sm" href="#history/week/' + wk + '">Every entry made this week →</a>' + (isRole('owner', 'manager', 'farmhand') ? '<a class="btn light sm" href="#summary/week/' + wk + '">📋 Weekly summary</a>' : '') + '</div>';
     return out + historyTable(p, 'Day by day', false);
   }
   function dayHome(t) {
@@ -268,6 +270,7 @@
       out += '<div class="card" style="margin-top:12px"><h2>Sales by salesperson ' + word + '</h2>' +
         (sellers.length ? sellers.map(function (id) { return kv(userName(id), cur(d.bySeller[id])); }).join('') : '<div class="empty">No sales ' + word + '</div>') + '</div>';
     }
+    if (isRole('manager', 'farmhand', 'owner')) out += '<a class="btn light sm" style="margin-top:12px" href="#summary/day/' + t + '">📋 Full daily summary — share on WhatsApp / print</a>';
     if (isToday && isRole('manager', 'farmhand', 'owner')) out += tasksPreviewBlock(t);
     if (isToday) out += historyTable(C.periodSummary(s, C.addDays(t, -13), t), 'Last 14 days', true);
     return out;
@@ -650,7 +653,7 @@
     var stTxt = { overdue: 'Overdue ' + (-C.dayDiff(t, x.date)) + ' day(s)', today: 'Today', soon: 'In ' + C.dayDiff(t, x.date) + ' day(s)', later: 'In ' + C.dayDiff(t, x.date) + ' days', done: 'Done' + (x.doneBy ? ' by ' + userName(x.doneBy) : ''), emergency: 'Open emergency' }[k];
     return '<a class="item" href="#task/' + x.id + '" style="' + (k === 'emergency' ? 'background:var(--red-soft);border-color:#E7A08D' : '') + '"><div class="date-badge ' + badgeCls + '"><b>' + d.getUTCDate() + '</b>' + MON[d.getUTCMonth()].toUpperCase() + '</div>' +
       '<div class="grow"><div class="row" style="gap:6px">' + chipFor(x.kind) + '<span class="tiny bold ' + (k === 'overdue' || k === 'emergency' ? 'red' : 'muted') + '">' + esc(stTxt) + '</span></div><div class="t">' + esc(x.title) + '</div>' +
-      '<div class="sub">' + esc(whereText(x)) + (x.assignee ? ' · ' + esc(userName(x.assignee)) : '') + (x.repeat && x.repeat !== 'once' ? ' · repeats' : '') + '</div></div></a>';
+      '<div class="sub">' + esc(whereText(x)) + (x.time ? ' · ⏰ ' + esc(x.time) : '') + (x.assignee ? ' · ' + esc(userName(x.assignee)) : '') + (x.repeat && x.repeat !== 'once' ? ' · repeats' : '') + '</div></div></a>';
   }
   routes.tasks = function (filter) {
     filter = filter || 'all';
@@ -690,6 +693,7 @@
     var out = back('tasks', 'Tasks') + head(x.title, chipFor(x.kind) + ' ' + esc(whereText(x)) + ' · ' + dLong(x.date));
     out += '<div class="card">' + kv('Status', esc(k === 'done' ? 'Done' : k === 'emergency' ? 'Open emergency' : k[0].toUpperCase() + k.slice(1)), k === 'overdue' || k === 'emergency' ? 'red' : '') +
       (x.assignee ? kv('Assigned to', esc(userName(x.assignee))) : '') + (x.repeat && x.repeat !== 'once' ? kv('Repeats', esc(REPEAT[x.repeat])) : '') +
+      (x.kind !== 'Emergency' ? kv('Alarm', esc(x.time || pad(C.alarmSettings(st()).hour) + ':00') + alarmBeforeText()) : '') +
       kv('Added by', esc(userName(x.by) || 'Schedule')) + (x.notes ? kv('Notes', esc(x.notes)) : '') +
       (x.status !== 'open' ? kv('Done', esc(dShort(x.doneAt)) + ' by ' + esc(userName(x.doneBy))) + (x.doneNote ? kv('Note', esc(x.doneNote)) : '') : '') + '</div>';
     if (x.kind === 'Emergency' && x.status === 'open') {
@@ -707,8 +711,16 @@
         '<label>Date done<input type="date" name="doneAt" value="' + t + '" max="' + t + '"></label><label>Note<input name="note" placeholder="optional"></label>' +
         '<button class="btn" type="submit">Next: preview →</button></form>';
     }
+    if (x.status === 'open' && x.kind !== 'Emergency' && isRole('owner', 'manager'))
+      out += '<form class="card row" data-form="tasktime" data-id="' + esc(x.id) + '" style="margin-top:12px;gap:8px;align-items:flex-end"><label class="grow">⏰ Change alarm time<input type="time" name="time" value="' + esc(x.time || pad(C.alarmSettings(st()).hour) + ':00') + '"></label><button class="btn light" type="submit">Save time</button></form>';
     if (isRole('owner')) out += '<button class="btn light block" style="margin-top:12px" type="button" data-act="deleteTask" data-id="' + esc(x.id) + '">Delete this task</button>';
     return out;
+  };
+  FORMS.tasktime = function (f) {
+    var x = byId(st().tasks, f.dataset.id), tm = val(f, 'time');
+    preview({ title: 'Alarm time · ' + x.title, errors: /^\d{2}:\d{2}$/.test(tm) ? [] : ['Choose a time.'],
+      rows: [['Task', esc(x.title)], ['Date', dLong(x.date)], ['Alarm', esc(tm) + alarmBeforeText()]],
+      onConfirm: async function () { await E.save(Object.assign({}, x, { time: tm })); return 'task/' + x.id; } });
   };
   FORMS.taskdone = function (f) {
     var x = byId(st().tasks, f.dataset.id), s = st();
@@ -729,7 +741,7 @@
           if (!targets.length) recs.push({ type: 'med', kind: 'use', date: doneAt, itemId: medId, qty: qty, taskId: x.id });
           targets.forEach(function (fl) { recs.push({ type: 'med', kind: 'use', date: doneAt, itemId: medId, qty: Math.round(qty / targets.length * 1000) / 1000, flockId: fl.id, coop: fl.coop, taskId: x.id }); });
         }
-        if (nxt) recs.push({ type: 'tasks', kind: x.kind, title: x.title, coops: x.coops || [], flockId: x.flockId, date: nxt, repeat: x.repeat, assignee: x.assignee || '', notes: x.notes || '', status: 'open' });
+        if (nxt) recs.push({ type: 'tasks', kind: x.kind, title: x.title, coops: x.coops || [], flockId: x.flockId, date: nxt, repeat: x.repeat, assignee: x.assignee || '', notes: x.notes || '', status: 'open', time: x.time || '' });
         await E.save(recs); return 'tasks';
       } });
   };
@@ -756,7 +768,8 @@
       '<form class="card" data-form="task"><label>Type of task<select name="kind">' + KINDS.map(function (k) { return opt(k, k, 'Disinfection'); }).join('') + '</select></label>' +
       '<label>What to do<input name="title" required placeholder="e.g. Clear nets and cobwebs"></label>' +
       '<div><div class="small bold" style="margin-bottom:6px">Which coop(s)?</div>' + checks + '</div>' +
-      '<div class="grid g2"><label>Date<input type="date" name="date" value="' + t + '" required></label><label>Repeat<select name="repeat">' + Object.keys(REPEAT).map(function (k) { return opt(k, REPEAT[k], 'once'); }).join('') + '</select></label></div>' +
+      '<div class="grid g2"><label>Date<input type="date" name="date" value="' + t + '" required></label><label>Alarm time<input type="time" name="time" value="' + pad(C.alarmSettings(s).hour) + ':00"></label></div>' +
+      '<label>Repeat<select name="repeat">' + Object.keys(REPEAT).map(function (k) { return opt(k, REPEAT[k], 'once'); }).join('') + '</select></label>' +
       '<label>Assign to<select name="assignee"><option value="">— anyone —</option>' + people.map(function (u) { return opt(u.id, u.name + ' (' + u.role + ')'); }).join('') + '</select></label>' +
       '<label>Notes<textarea name="notes"></textarea></label><button class="btn" type="submit">Next: preview →</button></form>';
   };
@@ -765,6 +778,7 @@
     var sel = val(f, 'all') ? [] : coops().filter(function (c) { return val(f, 'c' + c); });
     var rec = { type: 'tasks', kind: emergency ? 'Emergency' : val(f, 'kind'), title: val(f, 'title').trim(), coops: sel, date: emergency ? t : val(f, 'date'),
       repeat: emergency ? 'once' : val(f, 'repeat'), assignee: emergency ? '' : val(f, 'assignee'), notes: val(f, 'notes').trim(), status: 'open' };
+    if (!emergency && /^\d{2}:\d{2}$/.test(val(f, 'time'))) rec.time = val(f, 'time');
     if (sel.length === 1) { var fl = C.flockInCoop(st(), sel[0], rec.date); if (fl) rec.flockId = fl.id; }
     var errors = [], warnings = [];
     if (!rec.title) errors.push('Write what the task is.');
@@ -772,7 +786,7 @@
     if (!emergency && rec.date < t) warnings.push('This date has already passed.');
     if (!val(f, 'all') && !sel.length) errors.push('Tick "Whole farm" or at least one coop.');
     preview({ title: emergency ? 'Emergency report' : 'New task', gold: false, errors: errors, warnings: warnings, confirm: emergency ? 'Send emergency' : 'Confirm & save',
-      rows: [['Type', esc(rec.kind)], ['What', esc(rec.title)], ['Where', esc(whereText(rec))]].concat(emergency ? [] : [['Date', dLong(rec.date)], ['Repeat', esc(REPEAT[rec.repeat])], ['Assigned to', esc(userName(rec.assignee) || 'Anyone')]]).concat(rec.notes ? [['Notes', esc(rec.notes)]] : []),
+      rows: [['Type', esc(rec.kind)], ['What', esc(rec.title)], ['Where', esc(whereText(rec))]].concat(emergency ? [] : [['Date', dLong(rec.date)], ['Alarm', esc(rec.time || pad(C.alarmSettings(st()).hour) + ':00') + alarmBeforeText()], ['Repeat', esc(REPEAT[rec.repeat])], ['Assigned to', esc(userName(rec.assignee) || 'Anyone')]]).concat(rec.notes ? [['Notes', esc(rec.notes)]] : []),
       onConfirm: async function () { var r = (await E.save(rec))[0]; return 'task/' + r.id; } });
   };
 
@@ -1459,6 +1473,243 @@
   ACT.histWho = function (el) { var p = (location.hash.slice(1).split('/')); go('history/' + (p[1] || 'day') + '/' + (p[2] || today()) + '/' + el.value + '/' + (p[4] || 'all')); };
   ACT.histCat = function (el) { var p = (location.hash.slice(1).split('/')); go('history/' + (p[1] || 'day') + '/' + (p[2] || today()) + '/' + (p[3] || 'all') + '/' + el.value); };
 
+  // ================================================================ ALARMS inside the app
+  // Rings while the app is open (screen on, or open in the background for a short while).
+  // When the phone is locked or the app is closed, the Google Calendar reminders ring instead.
+  var SOUNDS = [['chime', 'Morning chime', 'soft bells, bright'], ['marimba', 'Marimba', 'friendly wooden tune'], ['rise', 'Soft rise', 'warm and calm'], ['bell', 'Farm bell', 'deep, slow bell']];
+  var AL = { ringing: null, audio: null, preview: null, previewName: '', again: null, wake: null };
+  function lsGet(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function alarmsOnHere() { return lsGet('eggman.alarmsOn', true) !== false; }
+  function alarmBeforeText() { var b = C.alarmSettings(st()).before; return b ? ' <span class="tiny muted">(rings ' + b + ' min before)</span>' : ''; }
+  function atMs(date, time) { var p = date.split('-'), q = time.split(':'); return new Date(+p[0], +p[1] - 1, +p[2], +q[0], +q[1], 0).getTime(); }
+  function myAlarms(date) {
+    if (!S.session) return [];
+    var u = me(), list = C.alarmsFor(st(), u, date);
+    if (isRole('owner', 'manager')) live(st().tasks).forEach(function (x) {
+      if (x.kind !== 'Emergency' || x.status !== 'open' || x.by === u.id || !x.createdAt) return;
+      var c = new Date(x.createdAt), d = today();
+      if (Date.now() - c.getTime() > 3 * 3600000 || date !== d) return;
+      list.push({ key: 'em|' + x.id, kind: 'emergency', taskId: x.id, date: d, time: pad(c.getHours()) + ':' + pad(c.getMinutes()), title: 'EMERGENCY: ' + x.title, sub: whereText(x) + ' · reported by ' + userName(x.by) });
+    });
+    return list;
+  }
+  function firedMap() {
+    var m = lsGet('eggman.fired', {}), cut = Date.now() - 3 * 86400000, out = {};
+    Object.keys(m).forEach(function (k) { if (m[k] > cut) out[k] = m[k]; });
+    return out;
+  }
+  function markFired(key) { var m = firedMap(); m[key] = Date.now(); lsSet('eggman.fired', m); }
+  function checkAlarms() {
+    if (!S.session || S.viewAs || !alarmsOnHere() || AL.ringing) return;
+    var now = Date.now(), fired = firedMap();
+    var snoozes = lsGet('eggman.snooze', []), dueSnooze = snoozes.filter(function (z) { return z.at <= now; })[0];
+    if (dueSnooze) { lsSet('eggman.snooze', snoozes.filter(function (z) { return z !== dueSnooze && z.at !== dueSnooze.at; })); ring(dueSnooze.alarm, true); return; }
+    var due = myAlarms(today()).filter(function (a) {
+      var at = atMs(a.date, a.time);
+      return !fired[a.key] && now >= at && now - at < (a.kind === 'emergency' ? 3 * 3600000 : 20 * 60000);
+    })[0];
+    if (due) ring(due);
+  }
+  function soundUrl(name) { return 'alarm-' + (name || C.alarmSettings(st()).sound) + '.mp3'; }
+  function ring(a, again) {
+    stopPreview();
+    AL.ringing = a; if (a.kind !== 'test') markFired(a.key);
+    var box = document.getElementById('alarmBox');
+    if (!box) { box = document.createElement('div'); box.id = 'alarmBox'; document.body.appendChild(box); }
+    var icon = a.kind === 'emergency' ? '🚨' : a.kind === 'collect' ? '🥚' : '⏰';
+    box.className = 'alarm-box' + (a.kind === 'emergency' ? ' em' : '');
+    box.innerHTML = '<div class="alarm-card" role="alertdialog" aria-labelledby="alTitle"><div class="alarm-ico">' + icon + '</div><div class="alarm-time">' + esc(a.time || '') + '</div>' +
+      '<h2 id="alTitle">' + esc(a.title) + '</h2><p>' + esc(a.sub || '') + '</p>' +
+      '<button class="btn gold block" type="button" data-act="alarmStop">Stop</button>' +
+      (a.kind === 'test' ? '' : '<button class="btn ghost block" type="button" data-act="alarmSnooze">Snooze 5 minutes</button>') +
+      (a.taskId ? '<button class="btn light block" type="button" data-act="alarmOpen">' + (a.kind === 'emergency' ? 'Open the emergency' : 'Open the task') + '</button>' : '') +
+      (a.kind === 'collect' ? '<button class="btn light block" type="button" data-act="alarmOpen">Enter the eggs</button>' : '') +
+      '<p class="tiny" id="alHint" hidden>Tap anywhere to hear the alarm sound.</p></div>';
+    box.hidden = false;
+    AL.audio = new Audio(soundUrl()); AL.audio.volume = 1;
+    var p = AL.audio.play(); if (p && p.catch) p.catch(function () { var h = document.getElementById('alHint'); if (h) h.hidden = false; });
+    AL.audio.onended = function () {
+      if (navigator.vibrate) navigator.vibrate(0);
+      if (!again && a.kind !== 'test' && AL.ringing === a) AL.again = setTimeout(function () { if (AL.ringing === a) { stopRinging(true); ring(a, true); } }, 5 * 60000); // nobody pressed Stop: ring once more
+    };
+    if (navigator.vibrate) navigator.vibrate([800, 400, 800, 400, 800, 400, 800]);
+    if ('Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker && a.kind !== 'test')
+      navigator.serviceWorker.ready.then(function (r) { r.showNotification(icon + ' ' + a.title, { body: a.sub || '', tag: a.key, renotify: true, requireInteraction: true, icon: 'icon-192.png', vibrate: [800, 400, 800] }); }).catch(function () {});
+  }
+  function stopRinging(keepBox) {
+    clearTimeout(AL.again);
+    if (AL.audio) { try { AL.audio.pause(); } catch (e) {} AL.audio = null; }
+    if (navigator.vibrate) navigator.vibrate(0);
+    var a = AL.ringing;
+    if (a && navigator.serviceWorker && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(function (r) { if (r && r.getNotifications) r.getNotifications({ tag: a.key }).then(function (l) { l.forEach(function (n) { n.close(); }); }); }).catch(function () {});
+    if (!keepBox) { var box = document.getElementById('alarmBox'); if (box) { box.hidden = true; box.innerHTML = ''; } AL.ringing = null; }
+  }
+  ACT.alarmStop = function () { stopRinging(); setTimeout(checkAlarms, 500); if (location.hash.indexOf('#alarms') === 0) render(); };
+  ACT.alarmSnooze = function () {
+    var a = AL.ringing; stopRinging();
+    var z = lsGet('eggman.snooze', []); var at = Date.now() + 5 * 60000, d = new Date(at);
+    z.push({ at: at, alarm: Object.assign({}, a, { time: pad(d.getHours()) + ':' + pad(d.getMinutes()), sub: (a.sub || '') + ' · snoozed' }) }); lsSet('eggman.snooze', z);
+    toast('Snoozed — it rings again at ' + pad(d.getHours()) + ':' + pad(d.getMinutes()));
+  };
+  ACT.alarmOpen = function () { var a = AL.ringing; stopRinging(); go(a && a.taskId ? 'task/' + a.taskId : 'coops'); };
+  document.addEventListener('click', function () { // first tap after a silent ring plays the sound
+    if (AL.ringing && AL.audio && AL.audio.paused && AL.audio.currentTime === 0) { var p = AL.audio.play(); if (p && p.catch) p.catch(function () {}); var h = document.getElementById('alHint'); if (h) h.hidden = true; }
+  }, true);
+  function stopPreview() { if (AL.preview) { try { AL.preview.pause(); } catch (e) {} AL.preview = null; } var was = AL.previewName; AL.previewName = ''; return was; }
+  ACT.playSound = function (b) {
+    var name = b.dataset.sound, was = stopPreview();
+    document.querySelectorAll('[data-act="playSound"]').forEach(function (x) { x.textContent = '▶ Listen'; });
+    if (was === name) return;
+    AL.preview = new Audio(soundUrl(name)); AL.previewName = name; b.textContent = '■ Stop';
+    AL.preview.onended = function () { AL.previewName = ''; b.textContent = '▶ Listen'; };
+    AL.preview.play().catch(function () { toast('Could not play the sound. Turn the volume up and try again.'); });
+  };
+  ACT.testAlarm = function () { var d = new Date(); ring({ key: 'test|' + Date.now(), kind: 'test', time: pad(d.getHours()) + ':' + pad(d.getMinutes()), title: 'Test alarm', sub: 'This is how alarms sound on this phone. Press Stop.' }); };
+  ACT.alarmsToggle = function () { lsSet('eggman.alarmsOn', !alarmsOnHere()); toast(alarmsOnHere() ? 'Alarms ON for this phone' : 'Alarms OFF for this phone'); render(); };
+  ACT.allowNotif = function () {
+    if (!('Notification' in window)) return toast('This browser cannot show notifications.');
+    Notification.requestPermission().then(function () { render(); });
+  };
+  function applyWake() {
+    if (!lsGet('eggman.keepAwake', false) || !('wakeLock' in navigator) || document.visibilityState !== 'visible' || AL.wake) return;
+    navigator.wakeLock.request('screen').then(function (w) { AL.wake = w; w.addEventListener('release', function () { AL.wake = null; }); }).catch(function () {});
+  }
+  ACT.keepAwake = function () {
+    var on = !lsGet('eggman.keepAwake', false); lsSet('eggman.keepAwake', on);
+    if (!on && AL.wake) { AL.wake.release(); AL.wake = null; } else applyWake();
+    toast(on ? 'Screen stays on while the app is open' : 'Screen can switch off again'); render();
+  };
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { applyWake(); checkAlarms(); } });
+  setInterval(checkAlarms, 15000);
+
+  routes.alarms = function () {
+    var s = st(), A = C.alarmSettings(s), t = today(), fired = firedMap(), now = Date.now(), on = alarmsOnHere();
+    var notif = 'Notification' in window ? Notification.permission : 'unsupported', wakeOk = 'wakeLock' in navigator, awake = lsGet('eggman.keepAwake', false);
+    var out = head('Alarms', 'Egg collection, vaccinations and every task ring here, with your chosen sound');
+    out += '<div class="card stack"><div class="row between"><h2>This phone</h2><span class="chip ' + (on ? 'green' : 'red') + '">' + (on ? 'Alarms ON' : 'Alarms OFF') + '</span></div>' +
+      '<div class="grid g2"><button class="btn gold" type="button" data-act="testAlarm">🔔 Test alarm now</button><button class="btn light" type="button" data-act="alarmsToggle">' + (on ? 'Turn OFF on this phone' : 'Turn ON on this phone') + '</button></div>' +
+      (wakeOk ? '<button class="btn light" type="button" data-act="keepAwake">' + (awake ? '✓ Screen stays on (tap to stop)' : '☀ Keep screen on — for the farm phone') + '</button>' : '') +
+      (notif === 'default' ? '<button class="btn light" type="button" data-act="allowNotif">Allow notifications (alarm shows at the top of the phone too)</button>' : notif === 'denied' ? '<div class="alert warn small">Notifications are blocked for this app. You can allow them in the phone’s Chrome settings › Site settings › Notifications.</div>' : '') +
+      '<div class="alert ok small"><b>When does it ring?</b> When the app is open — on the screen, or just switched away from. Keep the farm phone <b>on charge</b>, with this app open and <b>Keep screen on</b>. When a phone is locked or the app is closed, the <b>Google Calendar</b> reminders ring instead, so nothing is missed.</div></div>';
+    function list(date, label) {
+      var l = myAlarms(date);
+      return '<div class="card" style="margin-top:12px"><h2>' + label + '</h2>' + (l.length ? l.map(function (a) {
+        var at = atMs(a.date, a.time), st2 = fired[a.key] ? '<span class="greenx tiny bold">rang ✓</span>' : at < now - 20 * 60000 ? '<span class="tiny muted">missed (app was closed)</span>' : at <= now ? '<span class="tiny bold">ringing…</span>' : '<span class="tiny muted">coming</span>';
+        return '<div class="kv"><span><b>' + esc(a.time) + '</b> · ' + esc(a.title) + '<br><span class="tiny muted">' + esc(a.sub || '') + '</span></span>' + st2 + '</div>';
+      }).join('') : '<div class="empty">No alarms for you ' + (date === t ? 'today' : 'tomorrow') + '.</div>') + '</div>';
+    }
+    out += list(t, 'Today') + list(C.addDays(t, 1), 'Tomorrow');
+    var who = function (l) { return l.map(function (r) { return { owner: 'Owner', manager: 'Farm manager', farmhand: 'Farm hands', sales: 'Salespeople' }[r] || r; }).join(', ') || 'nobody'; };
+    if (realRole() === 'owner' && !S.viewAs) {
+      var box = function (name, r, l) { return '<label class="pill" style="display:inline-flex;align-items:center;gap:6px;flex-direction:row"><input type="checkbox" name="' + name + '_' + r + '" style="width:auto;min-height:0"' + (l.indexOf(r) >= 0 ? ' checked' : '') + '> ' + { owner: 'Owner', manager: 'Farm manager', farmhand: 'Farm hands', sales: 'Salespeople' }[r] + '</label>'; };
+      var roles = ['owner', 'manager', 'farmhand', 'sales'];
+      out += '<form class="card stack" data-form="alarmset" style="margin-top:12px"><h2>Alarm settings (owner)</h2><p class="small muted" style="margin:0">These go to every phone at its next sync.</p>' +
+        '<div class="small bold">Alarm sound (30 seconds)</div><div class="stack" style="gap:6px">' + SOUNDS.map(function (x) {
+          return '<div class="row between" style="gap:8px;border:1px solid #EDE7D6;border-radius:12px;padding:8px 10px"><label class="row" style="flex-direction:row;align-items:center;gap:8px;margin:0"><input type="radio" name="appAlarmSound" value="' + x[0] + '" style="width:auto;min-height:0"' + (A.sound === x[0] ? ' checked' : '') + '> <span><b>' + esc(x[1]) + '</b><br><span class="tiny muted">' + esc(x[2]) + '</span></span></label>' +
+            '<button class="btn light sm" type="button" data-act="playSound" data-sound="' + x[0] + '">▶ Listen</button></div>';
+        }).join('') + '</div>' +
+        '<div class="grid g2"><label>Ring before the time<select name="appAlarmBefore">' + [[0, 'On time'], [5, '5 min before'], [10, '10 min before'], [15, '15 min before'], [30, '30 min before'], [60, '1 hour before']].map(function (x) { return opt(x[0], x[1], A.before); }).join('') + '</select></label>' +
+        '<label>Task alarm time (when a task has no time)<input type="time" name="alarmHourTime" value="' + pad(A.hour) + ':00"></label></div>' +
+        '<label>Egg collection times<input name="collectionTimes" value="' + esc(setting('collectionTimes', '')) + '" placeholder="08:00, 12:00, 16:00"></label>' +
+        '<div><div class="small bold" style="margin-bottom:6px">Who hears egg collection alarms</div><div class="pills">' + roles.map(function (r) { return box('col', r, A.collect); }).join('') + '</div></div>' +
+        '<div><div class="small bold" style="margin-bottom:6px">Who hears task alarms (vaccination, cleaning…)</div><div class="pills">' + roles.map(function (r) { return box('task', r, A.tasks); }).join('') + '</div><p class="tiny muted" style="margin:4px 0 0">A task given to one person rings only on that person’s phone (and the owner’s).</p></div>' +
+        '<div class="grid g2"><label>Daily summary email to the owner<select name="dailySummaryEmail">' + opt('yes', 'Yes', setting('dailySummaryEmail', 'yes')) + opt('no', 'No', setting('dailySummaryEmail', 'yes')) + '</select></label>' +
+        '<label>Send it at<input type="time" name="dailySummaryTime" value="' + pad(C.int(setting('dailySummaryHour', 19))) + ':00"></label></div>' +
+        '<button class="btn gold" type="submit">Next: preview →</button></form>';
+    } else {
+      out += '<div class="card" style="margin-top:12px"><h2>Set by the owner</h2>' + kv('Sound', esc((SOUNDS.filter(function (x) { return x[0] === A.sound; })[0] || SOUNDS[0])[1]) + ' <button class="btn light sm" type="button" data-act="playSound" data-sound="' + A.sound + '">▶ Listen</button>') +
+        kv('Rings', A.before ? A.before + ' minutes before' : 'at the exact time') + kv('Egg collection', esc(A.times.join(', ') || 'not set') + ' · ' + esc(who(A.collect))) + kv('Tasks', esc(who(A.tasks))) + '</div>';
+    }
+    return out;
+  };
+  function settingsRowsWith(over) {
+    var cur = st().settings, rows = [], keys = Object.keys(cur);
+    Object.keys(over).forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
+    keys.forEach(function (k) { rows.push({ key: k, value: over.hasOwnProperty(k) ? over[k] : cur[k] }); });
+    return rows;
+  }
+  FORMS.alarmset = function (f) {
+    stopPreview();
+    var roles = ['owner', 'manager', 'farmhand', 'sales'], pick = function (n) { return roles.filter(function (r) { return f.elements[n + '_' + r] && f.elements[n + '_' + r].checked; }).join(','); };
+    var snd = (f.querySelector('input[name=appAlarmSound]:checked') || {}).value || 'chime';
+    var hr = val(f, 'alarmHourTime'), dt = val(f, 'dailySummaryTime'), times = val(f, 'collectionTimes').trim(), errors = [], warnings = [];
+    var over = { appAlarmSound: snd, appAlarmBefore: val(f, 'appAlarmBefore'), appAlarmCollect: pick('col') || 'none', appAlarmTasks: pick('task') || 'none',
+      collectionTimes: times, alarmHour: hr ? String(+hr.split(':')[0]) : '6', dailySummaryEmail: val(f, 'dailySummaryEmail'), dailySummaryHour: dt ? String(+dt.split(':')[0]) : '19' };
+    if (times && !times.split(/[,;\s]+/).filter(Boolean).every(function (x) { return /^([01]?\d|2[0-3])[:.][0-5]\d$/.test(x); })) errors.push('Egg collection times must look like 08:00, 12:00, 16:00');
+    if (hr && hr.split(':')[1] !== '00') warnings.push('Task alarms use whole hours — ' + hr + ' becomes ' + hr.split(':')[0] + ':00. You can give any task its own exact time on the task page.');
+    var nm = (SOUNDS.filter(function (x) { return x[0] === snd; })[0] || [])[1];
+    var who = function (l) { return l === 'none' ? 'nobody' : l.split(',').map(function (r) { return { owner: 'Owner', manager: 'Farm manager', farmhand: 'Farm hands', sales: 'Salespeople' }[r]; }).join(', '); };
+    preview({ title: 'Alarm settings', errors: errors, warnings: warnings, confirm: 'Save to Google Sheet', gold: true, doneMessage: 'Saved ✓ — every phone gets it at its next sync',
+      rows: [['Sound', esc(nm)], ['Rings', over.appAlarmBefore === '0' ? 'at the exact time' : over.appAlarmBefore + ' minutes before'], ['Egg collection', esc(times || 'none')], ['Collection alarms for', esc(who(over.appAlarmCollect))],
+        ['Task alarms for', esc(who(over.appAlarmTasks))], ['Task alarm time', pad(+over.alarmHour) + ':00 (when a task has no time)'], ['Daily summary email', over.dailySummaryEmail === 'yes' ? 'every day at ' + pad(+over.dailySummaryHour) + ':00' : 'off']],
+      onConfirm: async function () { await E.saveMaster('Settings', settingsRowsWith(over)); return 'alarms'; } });
+  };
+
+  // ================================================================ DAILY / WEEKLY SUMMARY of everything
+  routes.summary = function (mode, date) {
+    var t = today(); mode = mode === 'week' ? 'week' : 'day';
+    date = /^\d{4}-\d{2}-\d{2}$/.test(date || '') ? date : t;
+    var from = mode === 'week' ? C.weekStart(date) : date, to = mode === 'week' ? C.addDays(from, 6) : date;
+    if (to > t) to = t;
+    if (from > t) return head('Summary') + '<div class="empty">That day has not come yet.</div>';
+    var s = st(), m = C.summary(s, from, to), money = isRole('owner'), epc = C.settingsOf(s).eggsPerCrate;
+    var title = mode === 'day' ? dLong(from) : 'Week ' + dShort(from) + ' – ' + dShort(C.addDays(from, 6)) + ' ' + from.slice(0, 4);
+    var prev = C.addDays(from, mode === 'day' ? -1 : -7), next = C.addDays(from, mode === 'day' ? 1 : 7);
+    var text = C.summaryText(s, m, farmName(), money);
+    var out = '<div class="no-print">' + head(mode === 'day' ? 'Daily summary' : 'Weekly summary', esc(title)) +
+      '<div class="row" style="gap:8px;margin-bottom:8px"><a class="pill' + (mode === 'day' ? ' on' : '') + '" href="#summary/day/' + (mode === 'day' ? date : to) + '" style="display:inline-flex;align-items:center;text-decoration:none;color:inherit">Day</a><a class="pill' + (mode === 'week' ? ' on' : '') + '" href="#summary/week/' + from + '" style="display:inline-flex;align-items:center;text-decoration:none;color:inherit">Week</a>' +
+      '<a class="btn light sm" href="#summary/' + mode + '/' + prev + '" aria-label="Before">‹</a><input type="date" value="' + from + '" max="' + t + '" data-act-change="sumPick" data-mode="' + mode + '" style="min-height:40px;width:auto" aria-label="Choose a day">' + (next > t ? '' : '<a class="btn light sm" href="#summary/' + mode + '/' + next + '" aria-label="After">›</a>') + '</div>' +
+      '<div class="grid g2" style="margin-bottom:12px"><a class="btn wa" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(text) + '">Share on WhatsApp</a><button class="btn light" type="button" data-act="print">Print / Save PDF</button></div></div>';
+    out += '<div class="print-only"><h1 style="margin:0">' + esc(farmName()) + '</h1><p>' + (mode === 'day' ? 'Daily summary · ' : 'Weekly summary · ') + esc(title) + '</p></div>';
+    var k = [kpiBox('Eggs collected', crates(m.eggs.total), m.eggs.cracked + ' cracked · ' + m.eggs.layRate + '% lay', 'dark'), kpiBox('Birds alive', m.birds.toLocaleString(), (m.eggs.deaths + m.eggs.culls) + ' died / culled', '', m.eggs.deaths ? 'red' : ''),
+      kpiBox('Egg store', crates(m.store.close.good), m.store.close.cracked + ' cracked · end of ' + (mode === 'day' ? 'day' : 'week')), kpiBox('Feed used', Object.keys(m.feed.used).reduce(function (a, x) { return a + m.feed.used[x]; }, 0) + ' bags', Object.keys(m.feed.used).join(', ') || '—')];
+    if (money) { k.push(kpiBox('Sales', cur(m.sales.totalCents), m.sales.count + (m.sales.count === 1 ? ' sale · ' : ' sales · ') + crates(m.sales.eggsGood), 'gold')); k.push(kpiBox('Money received', cur(m.received.total), 'Cash ' + cur(m.received.Cash) + ' · MoMo ' + cur(m.received.MoMo))); k.push(kpiBox('New debts', cur(m.sales.debtAddedCents), 'old debts paid ' + cur(m.debtPaid.totalCents), '', m.sales.debtAddedCents ? 'red' : '')); k.push(kpiBox('Expenses', cur(m.expenses.totalCents), m.expenses.list.length + ' items')); }
+    out += '<div class="grid g2 g4-md">' + k.join('') + '</div>';
+    if (m.missing.length) out += '<div class="alert warn" style="margin-top:12px">No egg record for Coop ' + m.missing.join(', ') + ' on this day.</div>';
+    // eggs by coop and collection
+    out += '<div class="card" style="margin-top:12px"><h2>Eggs by coop' + (mode === 'day' ? ' and collection' : '') + '</h2>' + (m.coops.length ? '<div class="scroll"><table><thead><tr><th>Coop</th><th class="right">Eggs</th><th class="right">Cracked</th><th class="right">Lay %</th><th class="right">Died</th><th class="right">Feed</th></tr></thead><tbody>' +
+      m.coops.map(function (c) {
+        var col = mode === 'day' ? c.collections.map(function (x, i) { return (i + 1) + '. ' + (x.time || '—') + ' · ' + crates(x.total) + (x.cracked ? ' (' + x.cracked + ' cracked)' : '') + ' — ' + esc(x.by); }).join('<br>') : c.collections.length + ' record' + (c.collections.length === 1 ? '' : 's');
+        return '<tr><td><b>Coop ' + c.coop + '</b></td><td class="right">' + crates(c.total) + '</td><td class="right">' + c.cracked + '</td><td class="right">' + c.layRate + '%</td><td class="right ' + (c.deaths ? 'red' : '') + '">' + (c.deaths + c.culls) + '</td><td class="right">' + c.feedBags + ' bg</td></tr>' +
+          '<tr><td colspan="6" class="tiny muted" style="padding-top:0;white-space:normal">' + col + '</td></tr>';
+      }).join('') + '<tr class="bold"><td>All</td><td class="right">' + crates(m.eggs.total) + '</td><td class="right">' + m.eggs.cracked + '</td><td class="right">' + m.eggs.layRate + '%</td><td class="right">' + (m.eggs.deaths + m.eggs.culls) + '</td><td class="right">' + m.eggs.feedBags + ' bg</td></tr></tbody></table></div>' : '<div class="empty">No eggs recorded.</div>') + '</div>';
+    // egg store
+    out += '<div class="card" style="margin-top:12px"><h2>Egg store</h2>' + kv('At the start', crates(m.store.open.good) + ' good · ' + m.store.open.cracked + ' cracked') + kv('Collected', crates(m.eggs.good) + ' good · ' + m.eggs.cracked + ' cracked') +
+      (m.store.moves.outGood || m.store.moves.outCracked ? kv('Given to salespeople', '− ' + crates(m.store.moves.outGood) + (m.store.moves.outCracked ? ' · ' + m.store.moves.outCracked + ' cracked' : '')) : '') +
+      (m.store.moves.backGood || m.store.moves.backCracked ? kv('Returned by salespeople', '+ ' + crates(m.store.moves.backGood) + (m.store.moves.backCracked ? ' · ' + m.store.moves.backCracked + ' cracked' : '')) : '') +
+      (m.store.moves.soldGood || m.store.moves.soldCracked ? kv('Sold at the farm', '− ' + crates(m.store.moves.soldGood) + (m.store.moves.soldCracked ? ' · ' + m.store.moves.soldCracked + ' cracked' : '')) : '') + m.adjusts.map(function (a) { return kv('Corrected by ' + esc(a.by), (a.pieces > 0 ? '+' : '') + a.pieces + ' ' + esc(a.eggKind) + (a.reason ? ' · ' + esc(a.reason) : '')); }).join('') +
+      kv('At the end', crates(m.store.close.good) + ' good · ' + m.store.close.cracked + ' cracked', 'bold') + '</div>';
+    if (m.crates.length) out += '<div class="card" style="margin-top:12px"><h2>Crates with salespeople</h2>' + m.crates.map(function (c) {
+      return kv(esc(c.name), 'took ' + crates(c.outGood) + ' · returned ' + crates(c.backGood) + (c.broken ? ' · broken ' + c.broken : '') + (c.returnRecorded === undefined ? '' : c.returnRecorded ? (c.balanced ? ' · <span class="greenx">balanced ✓</span>' : ' · <span class="red">not balanced</span>') : ' · <span class="muted">return not recorded yet</span>'));
+    }).join('') + '</div>';
+    if (money) {
+      out += '<div class="card" style="margin-top:12px"><h2>Sales &amp; money</h2>' + Object.keys(m.sales.bySeller).map(function (id) { var x = m.sales.bySeller[id]; return kv(esc(x.name), cur(x.totalCents) + ' · ' + x.count + (x.count === 1 ? ' sale' : ' sales') + ' · paid ' + cur(x.paidCents)); }).join('') +
+        kv('Cash', cur(m.received.Cash)) + kv('MoMo', cur(m.received.MoMo)) + kv('Bank', cur(m.received.Bank)) + kv('Total received', cur(m.received.total), 'bold') +
+        (m.sales.hens ? kv('Spent hens sold', m.sales.hens) : '') + kv('New debts', cur(m.sales.debtAddedCents), m.sales.debtAddedCents ? 'red' : '') + kv('Old debts paid', cur(m.debtPaid.totalCents), 'greenx') +
+        (mode === 'day' && m.sales.list.length ? '<details style="margin-top:8px"><summary class="small">All ' + m.sales.list.length + ' sales</summary>' + m.sales.list.map(function (x) { return kv(esc(x.time + ' ' + x.receiptNo + ' · ' + x.customer), cur(x.totalCents) + (x.totalCents > x.paidCents ? ' <span class="red">owes ' + cur(x.totalCents - x.paidCents) + '</span>' : '')); }).join('') + '</details>' : '') + '</div>';
+    }
+    // feed & medicine
+    var fm = [];
+    Object.keys(m.feed.used).forEach(function (n) { fm.push(kv('Used: ' + esc(n), m.feed.used[n] + ' bags')); });
+    m.feed.bought.forEach(function (b) { fm.push(kv('Bought: ' + esc(b.item), b.qty + ' ' + esc(b.unit) + (money ? ' · ' + cur(b.costCents) : ''))); });
+    m.feed.mixed.forEach(function (b) { fm.push(kv('Mixed: ' + esc(b.item), b.kg + ' kg')); });
+    m.med.used.forEach(function (x) { fm.push(kv('Medicine used: ' + esc(x.item), x.qty + ' ' + esc(x.unit) + (x.coop ? ' · Coop ' + esc(x.coop) : ''))); });
+    m.med.bought.forEach(function (x) { fm.push(kv('Medicine bought: ' + esc(x.item), x.qty + ' ' + esc(x.unit) + (money ? ' · ' + cur(x.costCents) : ''))); });
+    out += '<div class="card" style="margin-top:12px"><h2>Feed &amp; medicine</h2>' + (fm.join('') || '<div class="empty">Nothing recorded.</div>') + '</div>';
+    // tasks
+    var tk = [];
+    m.tasks.emergencies.forEach(function (x) { tk.push('<div class="small" style="padding:4px 0"><span class="chip red">Emergency</span> ' + esc(x.title) + ' · ' + esc(x.where) + ' <span class="tiny muted">reported by ' + esc(x.by) + '</span>' + (x.open ? ' <b class="red">STILL OPEN</b>' : ' <span class="greenx">handled' + (x.handledBy ? ' by ' + esc(x.handledBy) : '') + (x.note ? ': ' + esc(x.note) : '') + '</span>') + '</div>'); });
+    m.tasks.done.forEach(function (x) { tk.push('<div class="small" style="padding:4px 0">✅ ' + chipFor(x.kind) + ' ' + esc(x.title) + ' · ' + esc(x.where) + ' <span class="tiny muted">— ' + esc(x.by) + '</span></div>'); });
+    m.tasks.overdue.forEach(function (x) { tk.push('<div class="small red" style="padding:4px 0">⏰ Overdue since ' + dShort(x.date) + ': ' + esc(x.title) + ' · ' + esc(x.where) + '</div>'); });
+    m.tasks.due.forEach(function (x) { tk.push('<div class="small muted" style="padding:4px 0">📅 ' + dShort(x.date) + (x.time ? ' ' + esc(x.time) : '') + ': ' + esc(x.title) + ' · ' + esc(x.where) + '</div>'); });
+    out += '<div class="card" style="margin-top:12px"><h2>Tasks</h2>' + (tk.join('') || '<div class="empty">No tasks.</div>') + '</div>';
+    if (money && m.expenses.list.length) out += '<div class="card" style="margin-top:12px"><h2>Expenses</h2>' + m.expenses.list.map(function (e) { return kv(esc(e.category) + (e.coop ? ' · Coop ' + e.coop : '') + (e.note ? ' · ' + esc(e.note) : ''), cur(e.amountCents)); }).join('') + kv('Total', cur(m.expenses.totalCents), 'bold') + '</div>';
+    out += '<details class="card no-print" style="margin-top:12px"><summary class="small bold">WhatsApp text</summary><pre style="white-space:pre-wrap;font-size:12px">' + esc(text) + '</pre></details>';
+    return out;
+  };
+  ACT.sumPick = function (el) { if (el.value) go('summary/' + el.dataset.mode + '/' + (el.dataset.mode === 'week' ? C.weekStart(el.value) : el.value)); };
+
   // ================================================================ MONTHLY REPORT (owner) — same page Google emails as PDF on the 1st
   routes.report = function (m) {
     m = m || C.monthOf(today());
@@ -1500,7 +1751,7 @@
       out += '<div class="card stack" style="margin-top:12px;border-color:#E7A08D"><h2>Start fresh</h2><p class="small muted" style="margin:0">Delete ALL records — coops, daily records, tasks, sales, payments, customers, crates, feed, medicine and expenses — on the Sheet and on every phone. Your settings, people, prices, items and schedule are kept. A backup copy of the Sheet is saved in Google Drive first.</p>' +
         '<a class="btn red" href="#start-fresh">Start fresh…</a><p class="tiny muted" style="margin:0">This button switches itself off again after it is used.</p></div>';
     }
-    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v1.4.2 · data is kept on this device and in your Google Sheet.</p>';
+    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v1.5 · data is kept on this device and in your Google Sheet.</p>';
     return out;
   };
   function startFreshOn() { return String(setting('allowStartFresh', 'no')).trim().toLowerCase() === 'yes'; }
@@ -1740,8 +1991,8 @@
     if (f && LIVE[f.dataset.form]) LIVE[f.dataset.form](f);
   });
   window.addEventListener('hashchange', function () { lastCust = null; render(); });
-  E.onChange(function () { if (isForm && S.session) { badge(); return; } render(); });
+  E.onChange(function () { setTimeout(checkAlarms, 300); if (isForm && S.session) { badge(); return; } render(); });
 
-  E.init().then(function () { render(); E.sync(); });
-  window.EggApp = { render: render };
+  E.init().then(function () { render(); E.sync(); applyWake(); setTimeout(checkAlarms, 1500); });
+  window.EggApp = { render: render, checkAlarms: checkAlarms, alarmState: function () { return { ringing: AL.ringing, src: AL.audio ? AL.audio.src : '' }; } };
 })();
