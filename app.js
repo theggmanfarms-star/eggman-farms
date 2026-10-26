@@ -1500,7 +1500,7 @@
       out += '<div class="card stack" style="margin-top:12px;border-color:#E7A08D"><h2>Start fresh</h2><p class="small muted" style="margin:0">Delete ALL records — coops, daily records, tasks, sales, payments, customers, crates, feed, medicine and expenses — on the Sheet and on every phone. Your settings, people, prices, items and schedule are kept. A backup copy of the Sheet is saved in Google Drive first.</p>' +
         '<a class="btn red" href="#start-fresh">Start fresh…</a><p class="tiny muted" style="margin:0">This button switches itself off again after it is used.</p></div>';
     }
-    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v1.4.1 · data is kept on this device and in your Google Sheet.</p>';
+    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v1.4.2 · data is kept on this device and in your Google Sheet.</p>';
     return out;
   };
   function startFreshOn() { return String(setting('allowStartFresh', 'no')).trim().toLowerCase() === 'yes'; }

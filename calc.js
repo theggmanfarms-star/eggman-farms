@@ -120,6 +120,19 @@ var Calc = (function () {
   }
 
   // ---------- eggs ----------
+  // A coop can have several collections in one day; this adds them up.
+  function dayRecords(state, flockId, date, excludeId) {
+    return live(state.daily).filter(function (x) { return x.flockId === flockId && x.date === date && x.id !== excludeId; });
+  }
+  function dayTotal(state, flockId, date, excludeId) {
+    var t = { good: 0, cracked: 0, total: 0, deaths: 0, culls: 0, feedBags: 0, count: 0 };
+    dayRecords(state, flockId, date, excludeId).forEach(function (x) {
+      var e = dailyEggs(state, x); t.good += e.good; t.cracked += e.cracked; t.total += e.total;
+      t.deaths += int(x.deaths); t.culls += int(x.culls); t.feedBags += num(x.feedBags); t.count++;
+    });
+    return t;
+  }
+  function weekStart(date) { var d = new Date(parseDay(date)).getUTCDay(); return addDays(date, -((d + 6) % 7)); } // Monday
   function dailyEggs(state, d) {
     var epc = settingsOf(state).eggsPerCrate;
     var good = int(d.goodCrates) * epc + int(d.goodPieces);
@@ -131,7 +144,7 @@ var Calc = (function () {
     if (!flock) return 0;
     var birds = birdsAtStartOf(state, flock, d.date);
     if (birds <= 0) return 0;
-    return Math.round(dailyEggs(state, d).total / birds * 1000) / 10; // one decimal place
+    return Math.round(dayTotal(state, d.flockId, d.date).total / birds * 1000) / 10; // whole day, all collections; one decimal
   }
   function toCrates(state, pieces) {
     var epc = settingsOf(state).eggsPerCrate, sign = pieces < 0 ? -1 : 1, p = Math.abs(int(pieces));
@@ -305,31 +318,34 @@ var Calc = (function () {
     ['goodCrates', 'goodPieces', 'cracked', 'deaths', 'culls'].forEach(function (k) {
       if (Math.round(num(d[k])) !== num(d[k])) errors.push('Eggs and birds must be whole numbers.');
     });
-    var dup = live(state.daily).filter(function (x) { return x.flockId === d.flockId && x.date === d.date && x.id !== d.id; });
-    if (dup.length) errors.push('Coop ' + flock.coop + ' already has a record for ' + d.date + '. The owner can edit it instead.');
+    var others = dayTotal(state, d.flockId, d.date, d.id), round = others.count + 1;
     var epc = settingsOf(state).eggsPerCrate;
     if (int(d.goodPieces) >= epc) warnings.push(int(d.goodPieces) + ' loose pieces is a full crate or more — did you mean crates?');
     var birds = birdsAtStartOf(state, flock, d.date);
-    var e = dailyEggs(state, d);
-    if (e.total > birds) errors.push(e.total + ' eggs is more than the ' + birds + ' birds in Coop ' + flock.coop + '.');
-    if (int(d.deaths) + int(d.culls) > birds) errors.push('Deaths are more than the birds left.');
+    var e = dailyEggs(state, d), dayEggs = others.total + e.total;
+    if (round > 1) warnings.push('This is collection ' + round + ' for Coop ' + flock.coop + ' on ' + d.date + '. Its eggs are added to the day: ' + cratesText(state, dayEggs) + ' in total.');
+    if (dayEggs > birds) errors.push((round > 1 ? 'With this collection the day has ' : '') + dayEggs + ' eggs — more than the ' + birds + ' birds in Coop ' + flock.coop + '.');
+    if (others.deaths + others.culls + int(d.deaths) + int(d.culls) > birds) errors.push('Deaths are more than the birds left.');
     if (num(d.feedBags) > 0 && !d.feedItemId) errors.push('Choose the type of feed used.');
     // compare with this coop's last 7 records
-    var past = sortChrono(live(state.daily).filter(function (x) { return x.flockId === d.flockId && x.date < d.date && x.id !== d.id; })).slice(-7);
+    // compare with this coop's last 7 days (whole-day totals)
+    var pastDates = {};
+    live(state.daily).forEach(function (x) { if (x.flockId === d.flockId && x.date < d.date) pastDates[x.date] = 1; });
+    var past = Object.keys(pastDates).sort().slice(-7).map(function (dt) { return dayTotal(state, d.flockId, dt); });
     if (past.length >= 3) {
       var avg = function (f) { return past.reduce(function (a, x) { return a + f(x); }, 0) / past.length; };
-      var aEggs = avg(function (x) { return dailyEggs(state, x).total; });
-      var aCr = avg(function (x) { return int(x.cracked); });
-      var aFeed = avg(function (x) { return num(x.feedBags); });
-      if (aEggs > 0 && e.total < aEggs * 0.85) warnings.push('Eggs are ' + Math.round((1 - e.total / aEggs) * 100) + '% lower than this coop’s recent average (' + cratesText(state, Math.round(aEggs)) + ').');
-      if (aEggs > 0 && e.total > aEggs * 1.15) warnings.push('Eggs are ' + Math.round((e.total / aEggs - 1) * 100) + '% higher than the recent average (' + cratesText(state, Math.round(aEggs)) + ').');
-      if (int(d.cracked) >= 5 && int(d.cracked) > aCr * 2) warnings.push(int(d.cracked) + ' cracked eggs is higher than usual (average ' + Math.round(aCr) + ').');
-      if (aFeed > 0 && Math.abs(num(d.feedBags) - aFeed) > aFeed * 0.25) warnings.push('Feed used (' + num(d.feedBags) + ' bags) is different from usual (' + (Math.round(aFeed * 10) / 10) + ' bags).');
+      var aEggs = avg(function (x) { return x.total; }), aCr = avg(function (x) { return x.cracked; }), aFeed = avg(function (x) { return x.feedBags; });
+      var dayCr = others.cracked + int(d.cracked), dayFeed = others.feedBags + num(d.feedBags);
+      if (round === 1 && aEggs > 0 && dayEggs < aEggs * 0.85) warnings.push('Eggs are ' + Math.round((1 - dayEggs / aEggs) * 100) + '% lower than this coop’s recent average (' + cratesText(state, Math.round(aEggs)) + ' a day). If you collect again later, add it as another collection.');
+      if (aEggs > 0 && dayEggs > aEggs * 1.15) warnings.push('Eggs for the day are ' + Math.round((dayEggs / aEggs - 1) * 100) + '% higher than the recent average (' + cratesText(state, Math.round(aEggs)) + ').');
+      if (dayCr >= 5 && dayCr > aCr * 2) warnings.push(dayCr + ' cracked eggs today is higher than usual (average ' + Math.round(aCr) + ').');
+      if (round === 1 && aFeed > 0 && Math.abs(dayFeed - aFeed) > aFeed * 0.25) warnings.push('Feed used (' + dayFeed + ' bags) is different from usual (' + (Math.round(aFeed * 10) / 10) + ' bags).');
     }
     var deadLimit = Math.max(3, Math.ceil(birds * 0.005));
     if (int(d.deaths) >= deadLimit) warnings.push(int(d.deaths) + ' deaths in one day is high — consider reporting an emergency and calling the vet.');
-    return { errors: errors, warnings: warnings, eggs: e, birdsBefore: birds, birdsAfter: birds - int(d.deaths) - int(d.culls),
-      layRate: birds > 0 ? Math.round(e.total / birds * 1000) / 10 : 0 };
+    return { errors: errors, warnings: warnings, eggs: e, round: round, dayEggs: dayEggs, birdsBefore: birds,
+      birdsAfter: birds - others.deaths - others.culls - int(d.deaths) - int(d.culls),
+      layRate: birds > 0 ? Math.round(dayEggs / birds * 1000) / 10 : 0 };
   }
 
   // ---------- feed: stock, average cost, cost per coop ----------
@@ -569,11 +585,13 @@ var Calc = (function () {
   // ---------- dashboard ----------
   function dashboard(state, today) {
     var flocks = activeFlocks(state, today);
-    var eggsToday = { good: 0, cracked: 0, total: 0 }, deaths = 0, birdsBefore = 0, recorded = 0;
+    var eggsToday = { good: 0, cracked: 0, total: 0 }, deaths = 0, birdsBefore = 0, recorded = 0, seenFlock = {};
     live(state.daily).forEach(function (d) {
       if (d.date !== today) return;
       var e = dailyEggs(state, d); eggsToday.good += e.good; eggsToday.cracked += e.cracked; eggsToday.total += e.total;
-      deaths += int(d.deaths) + int(d.culls); recorded++;
+      deaths += int(d.deaths) + int(d.culls);
+      if (seenFlock[d.flockId]) return;
+      seenFlock[d.flockId] = 1; recorded++;
       var f = byId(state.flocks)[d.flockId]; if (f) birdsBefore += birdsAtStartOf(state, f, today);
     });
     var birds = flocks.reduce(function (a, f) { return a + birdsAlive(state, f, today); }, 0);
@@ -635,10 +653,11 @@ var Calc = (function () {
   function periodSummary(state, from, to) {
     var days = {}, tot = { eggs: 0, good: 0, cracked: 0, birdDays: 0, deaths: 0, salesCents: 0, receivedCents: 0, debtPaidCents: 0, expensesCents: 0, records: 0, sales: 0 };
     function day(d) { return days[d] || (days[d] = { date: d, eggs: 0, birdDays: 0, deaths: 0, salesCents: 0, receivedCents: 0, records: 0, sales: 0 }); }
-    var fl = byId(state.flocks);
+    var fl = byId(state.flocks), seenFD = {};
     live(state.daily).forEach(function (d) {
       if (d.date < from || d.date > to) return;
-      var e = dailyEggs(state, d), f = fl[d.flockId], bd = f ? birdsAtStartOf(state, f, d.date) : 0, x = day(d.date);
+      var key = d.flockId + '|' + d.date, first = !seenFD[key]; seenFD[key] = 1;
+      var e = dailyEggs(state, d), f = fl[d.flockId], bd = f && first ? birdsAtStartOf(state, f, d.date) : 0, x = day(d.date);
       x.eggs += e.total; x.birdDays += bd; x.deaths += int(d.deaths) + int(d.culls); x.records++;
       tot.eggs += e.total; tot.good += e.good; tot.cracked += e.cracked; tot.birdDays += bd; tot.deaths += int(d.deaths) + int(d.culls); tot.records++;
     });
@@ -693,13 +712,13 @@ var Calc = (function () {
     }).sort(function (a, b) { return int(a.coop) - int(b.coop); });
     var farm = { startBirds: 0, endBirds: 0, deaths: 0, culls: 0, hensSold: 0, eggs: 0, good: 0, cracked: 0, birdDays: 0, feedBags: 0, feedKg: 0, arrived: 0 };
     var coopRows = flocks.map(function (f) {
-      var r = { coop: int(f.coop), flockId: f.id, breed: f.breed || '', eggs: 0, good: 0, cracked: 0, deaths: 0, culls: 0, hensSold: 0, feedBags: 0, feedKg: 0, birdDays: 0, days: 0 };
+      var r = { coop: int(f.coop), flockId: f.id, breed: f.breed || '', eggs: 0, good: 0, cracked: 0, deaths: 0, culls: 0, hensSold: 0, feedBags: 0, feedKg: 0, birdDays: 0, days: 0, seen: {} };
       live(state.daily).forEach(function (d) {
         if (d.flockId !== f.id || !inM(d.date)) return;
         var e = dailyEggs(state, d);
         r.eggs += e.total; r.good += e.good; r.cracked += e.cracked; r.deaths += int(d.deaths); r.culls += int(d.culls);
         r.feedBags += num(d.feedBags); r.feedKg += d.feedItemId ? itemKg(state, im[d.feedItemId], d.feedBags, 'bag') : 0;
-        r.birdDays += birdsAtStartOf(state, f, d.date); r.days++;
+        if (!r.seen[d.date]) { r.seen[d.date] = 1; r.birdDays += birdsAtStartOf(state, f, d.date); r.days++; }
       });
       live(state.sales).forEach(function (sale) {
         if (!inM(sale.date)) return;
@@ -714,7 +733,7 @@ var Calc = (function () {
       var p = pRow[f.id] || { incomeCents: 0, costCents: 0, profitCents: 0, feed: 0, med: 0, direct: 0, shared: 0 };
       r.incomeCents = p.incomeCents; r.costCents = p.costCents; r.profitCents = p.profitCents; r.feedCents = p.feed; r.medCents = p.med; r.otherCostCents = p.direct + p.shared;
       ['startBirds', 'endBirds', 'deaths', 'culls', 'hensSold', 'eggs', 'good', 'cracked', 'birdDays', 'feedBags', 'feedKg', 'arrived'].forEach(function (k) { farm[k] += r[k]; });
-      r.feedBags = Math.round(r.feedBags * 100) / 100; r.feedKg = Math.round(r.feedKg * 10) / 10;
+      r.feedBags = Math.round(r.feedBags * 100) / 100; r.feedKg = Math.round(r.feedKg * 10) / 10; delete r.seen;
       return r;
     });
     farm.layRate = farm.birdDays ? Math.round(farm.eggs / farm.birdDays * 1000) / 10 : 0;
@@ -919,7 +938,8 @@ var Calc = (function () {
     mixPreview: mixPreview, medState: medState, profit: profit, flockLifetime: flockLifetime,
     generateFlockTasks: generateFlockTasks, nextDate: nextDate, taskStatus: taskStatus, dashboard: dashboard,
     lastDayOfMonth: lastDayOfMonth, balanceAt: balanceAt, monthlyReport: monthlyReport, reportHtml: reportHtml, money: money,
-    oldestUnpaidDate: oldestUnpaidDate, debtSummary: debtSummary, periodSummary: periodSummary, yearSummary: yearSummary
+    oldestUnpaidDate: oldestUnpaidDate, debtSummary: debtSummary, periodSummary: periodSummary, yearSummary: yearSummary,
+    dayRecords: dayRecords, dayTotal: dayTotal, weekStart: weekStart
   };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = Calc;
