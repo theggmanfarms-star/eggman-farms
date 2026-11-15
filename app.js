@@ -287,6 +287,7 @@
     k.push(kpiBox('Birds alive', d.birds.toLocaleString(), d.deaths + ' died ' + word));
     if (isToday) k.push(kpiBox('Tasks', d.tasks.overdue + ' overdue', d.tasks.today + ' today · ' + d.tasks.soon + ' soon', '', d.tasks.overdue ? 'red' : ''));
     out += '<div class="grid g2 g4-md">' + k.join('') + '</div>';
+    if (isRole('owner', 'manager')) out += salesEggsCard(t);
     var bars = coops().map(function (c) {
       var f = C.flockInCoop(s, c, t), dt = f ? C.dayTotal(s, f.id, t) : null, rec = dt && dt.count ? dt : null;
       return { c: c, v: rec ? rec.total : 0, f: f, rec: rec };
@@ -373,6 +374,28 @@
     var WL = C.waitingList(st(), me(), t);
     return WL.callNow.length ? '<a class="alert warn" style="display:block;margin-top:12px;text-decoration:none;color:inherit" href="#waiting"><b>📞 ' + WL.callNow.length + ' customer' + (WL.callNow.length === 1 ? '' : 's') + ' to call today</b> — they asked to buy and are still waiting. Tap to see who.</a>' : '';
   }
+  // Home: eggs given to each salesperson that day — given (with time), sold, returned, still with them
+  function salesEggsCard(t) {
+    var s = st(), word = t === today() ? 'today' : 'that day', tot = { out: 0, cracked: 0, left: 0 }, money = isRole('owner');
+    var lines = salesUsers().map(function (u) {
+      var c = C.carry(s, u.id, t);
+      var moves = C.sortChrono(live(s.stock).filter(function (m) { return m.salesUserId === u.id && m.date === t && m.kind === 'out'; }));
+      if (!moves.length && !c.opening.good && !c.opening.cracked && !c.sold.good) return '';
+      tot.out += c.out.good; tot.cracked += c.out.cracked; tot.left += c.remaining.good;
+      var times = moves.map(function (m) { var d = m.createdAt ? new Date(m.createdAt) : null; return d && !isNaN(d) ? pad(d.getHours()) + ':' + pad(d.getMinutes()) : ''; }).filter(Boolean);
+      var status = c.returnRecorded ? (c.balanced ? '<span class="chip green">Balanced ✓</span>' : '<span class="chip red">' + crates(c.remaining.good) + ' missing</span>') : '';
+      var hand = money ? handIn(u.id, t) : null;
+      return '<a href="#crates/' + t + '" style="display:block;text-decoration:none;color:inherit;padding:10px 0;border-bottom:1px solid #F0ECE1">' +
+        '<div class="row between"><b>' + esc(u.name) + '</b>' + status + '</div>' +
+        '<div class="small">Given <b>' + crates(c.out.good) + '</b>' + (c.out.cracked ? ' + ' + crates(c.out.cracked) + ' cracked' : '') + (times.length ? ' <span class="muted">at ' + times.join(', ') + '</span>' : '') +
+        (c.opening.good ? ' · had ' + crates(c.opening.good) + ' from before' : '') + ' · sold ' + crates(c.sold.good) +
+        (c.returnRecorded ? ' · returned ' + crates(c.returned.good) : '') + ' · <b>still with ' + esc(u.name) + ': ' + crates(c.remaining.good) + '</b></div>' +
+        (hand && hand.total ? '<div class="tiny muted">Money to hand in: ' + cur(hand.total) + ' (cash ' + cur(hand.Cash) + ' · MoMo ' + cur(hand.MoMo) + ')</div>' : '') + '</a>';
+    }).filter(Boolean);
+    return '<div class="card" style="margin-top:12px"><div class="row between"><h2>Eggs with salespeople ' + word + '</h2><a class="small" href="#crates/' + t + '">Crates →</a></div>' +
+      (lines.length ? '<div class="small" style="margin:4px 0 2px">Given out ' + word + ': <b>' + crates(tot.out) + '</b>' + (tot.cracked ? ' + ' + crates(tot.cracked) + ' cracked' : '') + ' · still with salespeople: <b>' + crates(tot.left) + '</b></div>' + lines.join('')
+        : '<div class="empty">No eggs given out ' + word + '.' + (t === today() && isRole('owner', 'manager') ? ' <a href="#crates">Give out eggs →</a>' : '') + '</div>') + '</div>';
+  }
   function salesHome(t, d) {
     var s = st(), u = me(), c = C.carry(s, u.id, t);
     var mine = live(s.sales).filter(function (x) { return x.by === u.id && x.date === t; });
@@ -382,6 +405,14 @@
     var out = '<div class="grid g2">' + kpiBox('Eggs with you now', crates(c.remaining.good), crates(c.remaining.cracked) + ' cracked', 'dark') +
       kpiBox('My sales today', cur(total), mine.length + ' sales', 'gold') + '</div>';
     out += '<div class="grid g2" style="margin-top:12px"><a class="btn gold" href="#sale-new">+ New sale</a><a class="btn ghost" href="#customers">Customers</a></div>';
+    var myMoves = C.sortChrono(live(s.stock).filter(function (m) { return m.salesUserId === u.id && m.date === t && m.kind === 'out'; }));
+    var times = myMoves.map(function (m) { var dt = m.createdAt ? new Date(m.createdAt) : null; return dt && !isNaN(dt) ? pad(dt.getHours()) + ':' + pad(dt.getMinutes()) : ''; }).filter(Boolean);
+    out += '<div class="card" style="margin-top:12px"><h2>My eggs today</h2>' +
+      (c.opening.good || c.opening.cracked ? kv('Had from before', crates(c.opening.good)) : '') +
+      kv('Given to me' + (times.length ? ' <span class="tiny muted">at ' + times.join(', ') + '</span>' : ''), crates(c.out.good) + (c.out.cracked ? ' + ' + crates(c.out.cracked) + ' cracked' : '')) +
+      kv('Sold', crates(c.sold.good) + (c.sold.cracked ? ' + ' + crates(c.sold.cracked) + ' cracked' : '')) +
+      (c.returnRecorded ? kv('Returned', crates(c.returned.good)) : '') +
+      kv('With me now', crates(c.remaining.good) + (c.remaining.cracked ? ' + ' + crates(c.remaining.cracked) + ' cracked' : ''), 'bold') + '</div>';
     out += callCard(t);
     out += '<div class="card" style="margin-top:12px"><h2>Money to hand in today</h2>' + kv('Cash', cur(cash.Cash || 0)) + kv('MoMo', cur(cash.MoMo || 0)) + kv('Bank', cur(cash.Bank || 0)) +
       kv('Total received', cur((cash.Cash || 0) + (cash.MoMo || 0) + (cash.Bank || 0))) + '</div>';
@@ -2447,7 +2478,7 @@
       out += '<div class="card stack" style="margin-top:12px;border-color:#E7A08D"><h2>Start fresh</h2><p class="small muted" style="margin:0">Delete ALL records — coops, daily records, tasks, sales, payments, customers, crates, feed, medicine and expenses — on the Sheet and on every phone. Your settings, people, prices, items and schedule are kept. A backup copy of the Sheet is saved in Google Drive first.</p>' +
         '<a class="btn red" href="#start-fresh">Start fresh…</a><p class="tiny muted" style="margin:0">This button switches itself off again after it is used.</p></div>';
     }
-    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v2.2' + (NATIVE ? ' (Android app)' : '') + ' · data is kept on this device and in your Google Sheet.</p>';
+    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v2.3' + (NATIVE ? ' (Android app)' : '') + ' · data is kept on this device and in your Google Sheet.</p>';
     return out;
   };
   function startFreshOn() { return String(setting('allowStartFresh', 'no')).trim().toLowerCase() === 'yes'; }
