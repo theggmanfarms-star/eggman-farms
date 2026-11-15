@@ -1,0 +1,885 @@
+# The Egg Man Farms — builds the Android app (real alarms that ring with the screen off).
+# Put this file in your repository at:  .github/workflows/android.yml
+# Every time this file changes (or you press "Run workflow"), GitHub builds a new APK and puts it here:
+#   https://github.com/<you>/<repo>/releases/download/android/EggManFarms.apk
+name: Build Android app
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/android.yml'
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Create the Android project
+        run: |
+          set -e
+          mkdir -p android android/app android/app/src/main android/app/src/main/java/com/theeggman/farms android/app/src/main/res/mipmap-xxxhdpi android/app/src/main/res/raw android/app/src/main/res/values
+          cat > 'android/settings.gradle' <<'EGGMAN_EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "EggManFarms"
+          include ':app'
+          EGGMAN_EOF
+          cat > 'android/build.gradle' <<'EGGMAN_EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EGGMAN_EOF
+          cat > 'android/gradle.properties' <<'EGGMAN_EOF'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=false
+          android.nonTransitiveRClass=true
+          EGGMAN_EOF
+          cat > 'android/app/build.gradle' <<'EGGMAN_EOF'
+          plugins {
+              id 'com.android.application'
+          }
+          def vc = (System.getenv('VERSION_CODE') ?: '1') as int
+          android {
+              namespace 'com.theeggman.farms'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.theeggman.farms'
+                  minSdk 26
+                  targetSdk 34
+                  versionCode vc
+                  versionName "1." + vc
+              }
+              signingConfigs {
+                  release {
+                      storeFile file('../release.keystore')
+                      storePassword 'eggman-farms'
+                      keyAlias 'eggman'
+                      keyPassword 'eggman-farms'
+                  }
+              }
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      signingConfig signingConfigs.release
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              lint {
+                  checkReleaseBuilds false
+                  abortOnError false
+              }
+          }
+          EGGMAN_EOF
+          cat > 'android/app/src/main/AndroidManifest.xml' <<'EGGMAN_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|uiMode|smallestScreenSize"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <activity
+                      android:name=".AlarmActivity"
+                      android:exported="false"
+                      android:excludeFromRecents="true"
+                      android:launchMode="singleInstance"
+                      android:taskAffinity=".alarm"
+                      android:showWhenLocked="true"
+                      android:turnScreenOn="true"
+                      android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+
+                  <receiver android:name=".AlarmReceiver" android:exported="false" />
+
+                  <receiver android:name=".BootReceiver" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                      </intent-filter>
+                  </receiver>
+
+                  <service
+                      android:name=".AlarmService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaPlayback" />
+              </application>
+          </manifest>
+          EGGMAN_EOF
+          cat > 'android/app/src/main/res/values/strings.xml' <<'EGGMAN_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Egg Man Farms</string>
+          </resources>
+          EGGMAN_EOF
+          cat > 'android/app/src/main/java/com/theeggman/farms/AlarmActivity.java' <<'EGGMAN_EOF'
+          package com.theeggman.farms;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          import java.lang.ref.WeakReference;
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Locale;
+
+          /** Big alarm screen that shows over the lock screen, like the Clock app. */
+          public class AlarmActivity extends Activity {
+              private static WeakReference<AlarmActivity> current = new WeakReference<>(null);
+              private TextView timeView, titleView, subView;
+
+              static void closeIfOpen() {
+                  AlarmActivity a = current.get();
+                  if (a != null) a.runOnUiThread(a::finish);
+              }
+
+              static void refreshIfOpen() {
+                  AlarmActivity a = current.get();
+                  if (a != null) a.runOnUiThread(a::fill);
+              }
+
+              @Override
+              protected void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  current = new WeakReference<>(this);
+                  if (Build.VERSION.SDK_INT >= 27) {
+                      setShowWhenLocked(true);
+                      setTurnScreenOn(true);
+                  } else {
+                      getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+                  }
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  getWindow().setStatusBarColor(0xFF1F4D2C);
+
+                  LinearLayout box = new LinearLayout(this);
+                  box.setOrientation(LinearLayout.VERTICAL);
+                  box.setGravity(Gravity.CENTER);
+                  box.setPadding(dp(28), dp(40), dp(28), dp(40));
+                  box.setBackgroundColor(0xFF1F4D2C);
+
+                  TextView icon = text("⏰", 64, Color.WHITE, false);
+                  timeView = text("", 54, 0xFFF2B705, true);
+                  titleView = text("", 26, Color.WHITE, true);
+                  subView = text("", 18, 0xFFDDEBDF, false);
+                  box.addView(icon);
+                  box.addView(timeView);
+                  box.addView(titleView);
+                  box.addView(subView);
+                  space(box, 28);
+                  box.addView(button("Stop", 0xFFF2B705, 0xFF1B1B1B, v -> { AlarmService.stop(this, false); finish(); }));
+                  space(box, 12);
+                  box.addView(button("Snooze 5 minutes", 0x33FFFFFF, Color.WHITE, v -> { AlarmService.stop(this, true); finish(); }));
+                  space(box, 12);
+                  box.addView(button("Open the farm app", 0x22FFFFFF, Color.WHITE, v -> {
+                      AlarmService.stop(this, false);
+                      Intent i = new Intent(this, MainActivity.class);
+                      i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                      startActivity(i);
+                      finish();
+                  }));
+                  setContentView(box);
+                  fill();
+              }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  setIntent(intent);
+                  fill();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  if (current.get() == this) current = new WeakReference<>(null);
+                  super.onDestroy();
+              }
+
+              void fill() {
+                  Intent i = getIntent();
+                  String t = i != null && i.getStringExtra("title") != null ? i.getStringExtra("title") : AlarmService.curTitle;
+                  String s = i != null && i.getStringExtra("sub") != null ? i.getStringExtra("sub") : AlarmService.curSub;
+                  if (AlarmService.ringing) { t = AlarmService.curTitle; s = AlarmService.curSub; }
+                  timeView.setText(new SimpleDateFormat("HH:mm", Locale.US).format(new Date()));
+                  titleView.setText(t);
+                  subView.setText(s);
+              }
+
+              private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+
+              private TextView text(String s, int sp, int color, boolean bold) {
+                  TextView t = new TextView(this);
+                  t.setText(s);
+                  t.setTextSize(sp);
+                  t.setTextColor(color);
+                  t.setGravity(Gravity.CENTER);
+                  if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
+                  t.setPadding(0, dp(4), 0, dp(4));
+                  return t;
+              }
+
+              private Button button(String label, int bg, int fg, View.OnClickListener l) {
+                  Button b = new Button(this);
+                  b.setText(label);
+                  b.setAllCaps(false);
+                  b.setTextSize(19);
+                  b.setTextColor(fg);
+                  b.setTypeface(Typeface.DEFAULT_BOLD);
+                  GradientDrawable d = new GradientDrawable();
+                  d.setColor(bg);
+                  d.setCornerRadius(dp(16));
+                  b.setBackground(d);
+                  b.setOnClickListener(l);
+                  b.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(58)));
+                  return b;
+              }
+
+              private void space(LinearLayout box, int h) {
+                  View v = new View(this);
+                  v.setLayoutParams(new LinearLayout.LayoutParams(1, dp(h)));
+                  box.addView(v);
+              }
+          }
+          EGGMAN_EOF
+          cat > 'android/app/src/main/java/com/theeggman/farms/AlarmReceiver.java' <<'EGGMAN_EOF'
+          package com.theeggman.farms;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+
+          /** Called by the phone at the alarm time, and by the Stop / Snooze buttons on the notification. */
+          public class AlarmReceiver extends BroadcastReceiver {
+              static final String ACTION_FIRE = "com.theeggman.farms.FIRE";
+              static final String ACTION_STOP = "com.theeggman.farms.STOP";
+              static final String ACTION_SNOOZE = "com.theeggman.farms.SNOOZE";
+
+              @Override
+              public void onReceive(Context c, Intent i) {
+                  String act = i.getAction() == null ? "" : i.getAction();
+                  if (act.equals(ACTION_STOP)) { AlarmService.stop(c, false); return; }
+                  if (act.equals(ACTION_SNOOZE)) { AlarmService.stop(c, true); return; }
+                  if (act.startsWith(ACTION_FIRE)) {
+                      AlarmService.ring(c, i.getStringExtra("title"), i.getStringExtra("sub"), i.getStringExtra("sound"));
+                  }
+              }
+          }
+          EGGMAN_EOF
+          cat > 'android/app/src/main/java/com/theeggman/farms/AlarmService.java' <<'EGGMAN_EOF'
+          package com.theeggman.farms;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.ServiceInfo;
+          import android.content.res.AssetFileDescriptor;
+          import android.graphics.drawable.Icon;
+          import android.media.AudioAttributes;
+          import android.media.MediaPlayer;
+          import android.media.RingtoneManager;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Handler;
+          import android.os.IBinder;
+          import android.os.Looper;
+          import android.os.PowerManager;
+          import android.os.VibrationEffect;
+          import android.os.Vibrator;
+
+          /** Plays the alarm for 30 seconds, vibrates, and shows the alarm screen — even when the phone is locked. */
+          public class AlarmService extends Service {
+              static final String CHANNEL = "eggman_alarm_v1";
+              static final int NOTE_ID = 4242;
+              static final long MAX_RING_MS = 32000;
+
+              static volatile boolean ringing = false;
+              static String curTitle = "Alarm", curSub = "", curSound = "chime";
+
+              private MediaPlayer player;
+              private Vibrator vibrator;
+              private final Handler handler = new Handler(Looper.getMainLooper());
+
+              // ---------------------------------------------------------------- start / stop from anywhere
+              static void ring(Context c, String title, String sub, String sound) {
+                  Intent s = new Intent(c, AlarmService.class);
+                  s.putExtra("title", title == null ? "Alarm" : title);
+                  s.putExtra("sub", sub == null ? "" : sub);
+                  s.putExtra("sound", sound == null ? "chime" : sound);
+                  try {
+                      if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(s); else c.startService(s);
+                  } catch (Exception e) {
+                      // Android did not allow the sound service right now: at least show the alarm with the phone's alarm sound.
+                      NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+                      ensureChannels(c);
+                      nm.notify(NOTE_ID, build(c, title, sub, true, true));
+                  }
+              }
+
+              static void stop(Context c, boolean snooze) {
+                  if (snooze) Alarms.snooze(c, curTitle, curSub, curSound, 5);
+                  ringing = false;
+                  c.stopService(new Intent(c, AlarmService.class));
+                  NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+                  nm.cancel(NOTE_ID);
+                  AlarmActivity.closeIfOpen();
+              }
+
+              // ---------------------------------------------------------------- service
+              @Override
+              public IBinder onBind(Intent i) { return null; }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  if (intent == null) { stopSelf(); return START_NOT_STICKY; }
+                  stopSound();
+                  curTitle = val(intent.getStringExtra("title"), "Alarm");
+                  curSub = val(intent.getStringExtra("sub"), "");
+                  curSound = val(intent.getStringExtra("sound"), "chime");
+                  ensureChannels(this);
+                  Notification n = build(this, curTitle, curSub, true, false);
+                  if (Build.VERSION.SDK_INT >= 29) startForeground(NOTE_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+                  else startForeground(NOTE_ID, n);
+                  ringing = true;
+                  play(curSound);
+                  vibrate();
+                  handler.removeCallbacksAndMessages(null);
+                  handler.postDelayed(this::finishRinging, MAX_RING_MS);
+                  AlarmActivity.refreshIfOpen();
+                  return START_NOT_STICKY;
+              }
+
+              /** The 30 seconds are over and nobody pressed Stop: go quiet but leave the alarm on the screen. */
+              private void finishRinging() {
+                  if (!ringing) return;
+                  ringing = false;
+                  stopSound();
+                  if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_DETACH); else stopForeground(false);
+                  NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                  nm.notify(NOTE_ID, build(this, curTitle, curSub, false, false));
+                  stopSelf();
+              }
+
+              @Override
+              public void onDestroy() {
+                  handler.removeCallbacksAndMessages(null);
+                  stopSound();
+                  super.onDestroy();
+              }
+
+              private static String val(String s, String d) { return s == null || s.isEmpty() ? d : s; }
+
+              private void play(String sound) {
+                  AudioAttributes attrs = new AudioAttributes.Builder()
+                          .setUsage(AudioAttributes.USAGE_ALARM)
+                          .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                          .build();
+                  try {
+                      player = new MediaPlayer();
+                      player.setAudioAttributes(attrs);
+                      int res = getResources().getIdentifier("alarm_" + sound, "raw", getPackageName());
+                      if (res == 0) res = getResources().getIdentifier("alarm_chime", "raw", getPackageName());
+                      if (res != 0) {
+                          AssetFileDescriptor fd = getResources().openRawResourceFd(res);
+                          player.setDataSource(fd.getFileDescriptor(), fd.getStartOffset(), fd.getLength());
+                          fd.close();
+                      } else {
+                          Uri u = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+                          player.setDataSource(this, u);
+                      }
+                      player.setWakeMode(this, PowerManager.PARTIAL_WAKE_LOCK);
+                      player.setOnCompletionListener(mp -> finishRinging());
+                      player.prepare();
+                      player.start();
+                  } catch (Exception e) {
+                      if (player != null) { try { player.release(); } catch (Exception ignored) { } }
+                      player = null;
+                  }
+              }
+
+              private void vibrate() {
+                  try {
+                      vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+                      if (vibrator == null || !vibrator.hasVibrator()) return;
+                      AudioAttributes va = new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build();
+                      vibrator.vibrate(VibrationEffect.createWaveform(new long[]{0, 800, 500, 800, 500}, 1), va);
+                  } catch (Exception ignored) { }
+              }
+
+              private void stopSound() {
+                  if (player != null) {
+                      try { player.stop(); } catch (Exception ignored) { }
+                      try { player.release(); } catch (Exception ignored) { }
+                      player = null;
+                  }
+                  if (vibrator != null) { try { vibrator.cancel(); } catch (Exception ignored) { } }
+              }
+
+              // ---------------------------------------------------------------- notification
+              static void ensureChannels(Context c) {
+                  NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+                  if (nm.getNotificationChannel(CHANNEL) == null) {
+                      NotificationChannel ch = new NotificationChannel(CHANNEL, "Farm alarms", NotificationManager.IMPORTANCE_HIGH);
+                      ch.setDescription("Egg collection, vaccinations, tasks and emergencies");
+                      ch.setSound(null, null);          // the app plays the chosen 30-second sound itself
+                      ch.enableVibration(false);        // ...and vibrates itself
+                      ch.setBypassDnd(true);
+                      ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+                      nm.createNotificationChannel(ch);
+                  }
+                  if (nm.getNotificationChannel(CHANNEL + "_fallback") == null) {
+                      NotificationChannel f = new NotificationChannel(CHANNEL + "_fallback", "Farm alarms (backup sound)", NotificationManager.IMPORTANCE_HIGH);
+                      f.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
+                              new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
+                      f.enableVibration(true);
+                      f.setBypassDnd(true);
+                      f.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+                      nm.createNotificationChannel(f);
+                  }
+              }
+
+              static Notification build(Context c, String title, String sub, boolean loud, boolean fallback) {
+                  Intent full = new Intent(c, AlarmActivity.class);
+                  full.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_USER_ACTION);
+                  full.putExtra("title", title);
+                  full.putExtra("sub", sub);
+                  PendingIntent fullPi = PendingIntent.getActivity(c, 10, full, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                  Notification.Builder b = new Notification.Builder(c, fallback ? CHANNEL + "_fallback" : CHANNEL)
+                          .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                          .setContentTitle(title)
+                          .setContentText(sub)
+                          .setStyle(new Notification.BigTextStyle().bigText(sub))
+                          .setCategory(Notification.CATEGORY_ALARM)
+                          .setVisibility(Notification.VISIBILITY_PUBLIC)
+                          .setContentIntent(fullPi)
+                          .setShowWhen(true)
+                          .setOngoing(loud)
+                          .setAutoCancel(!loud)
+                          .setOnlyAlertOnce(!loud)
+                          .addAction(new Notification.Action.Builder((Icon) null, "Stop", control(c, AlarmReceiver.ACTION_STOP)).build())
+                          .addAction(new Notification.Action.Builder((Icon) null, "Snooze 5 min", control(c, AlarmReceiver.ACTION_SNOOZE)).build());
+                  if (loud) b.setFullScreenIntent(fullPi, true);
+                  return b.build();
+              }
+
+              private static PendingIntent control(Context c, String action) {
+                  Intent i = new Intent(c, AlarmReceiver.class);
+                  i.setAction(action);
+                  return PendingIntent.getBroadcast(c, action.hashCode(), i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+              }
+          }
+          EGGMAN_EOF
+          cat > 'android/app/src/main/java/com/theeggman/farms/Alarms.java' <<'EGGMAN_EOF'
+          package com.theeggman.farms;
+
+          import android.app.AlarmManager;
+          import android.app.PendingIntent;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.os.Build;
+
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          /** Keeps the phone's real alarms (like the Clock app) in step with the farm app's list. */
+          final class Alarms {
+              static final String PREFS = "eggman_alarms";
+              static final int BASE = 1000, MAX = 80, SNOOZE_BASE = 900;
+
+              private Alarms() {}
+
+              static SharedPreferences prefs(Context c) {
+                  return c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+              }
+
+              /** Replace all scheduled alarms with this list: [{"at": ms, "title": "", "sub": "", "sound": "chime"}]. */
+              static synchronized int schedule(Context c, String json) {
+                  Context app = c.getApplicationContext();
+                  SharedPreferences p = prefs(app);
+                  AlarmManager am = (AlarmManager) app.getSystemService(Context.ALARM_SERVICE);
+                  int old = p.getInt("count", 0);
+                  for (int i = 0; i < old; i++) {
+                      PendingIntent pi = pending(app, BASE + i, null, null, null, PendingIntent.FLAG_NO_CREATE);
+                      if (pi != null) { am.cancel(pi); pi.cancel(); }
+                  }
+                  int n = 0;
+                  long now = System.currentTimeMillis();
+                  JSONArray kept = new JSONArray();
+                  try {
+                      JSONArray list = new JSONArray(json == null || json.trim().isEmpty() ? "[]" : json);
+                      for (int i = 0; i < list.length() && n < MAX; i++) {
+                          JSONObject a = list.getJSONObject(i);
+                          long at = a.optLong("at", 0);
+                          if (at <= now) continue;
+                          set(app, am, BASE + n, at, a.optString("title", "Alarm"), a.optString("sub", ""), a.optString("sound", "chime"));
+                          kept.put(a);
+                          n++;
+                      }
+                  } catch (Exception e) {
+                      // a broken list sets nothing; the next sync sends a good one
+                  }
+                  p.edit().putInt("count", n).putString("list", kept.toString()).apply();
+                  return n;
+              }
+
+              /** After the phone restarts it forgets all alarms: set them again from the saved list. */
+              static void restore(Context c) {
+                  schedule(c, prefs(c).getString("list", "[]"));
+              }
+
+              static void snooze(Context c, String title, String sub, String sound, int minutes) {
+                  Context app = c.getApplicationContext();
+                  SharedPreferences p = prefs(app);
+                  int slot = (p.getInt("snoozeSlot", 0) + 1) % 10;
+                  p.edit().putInt("snoozeSlot", slot).apply();
+                  AlarmManager am = (AlarmManager) app.getSystemService(Context.ALARM_SERVICE);
+                  String s = sub == null ? "" : sub;
+                  if (!s.endsWith("(snoozed)")) s = s + " (snoozed)";
+                  set(app, am, SNOOZE_BASE + slot, System.currentTimeMillis() + minutes * 60000L, title, s, sound);
+              }
+
+              static boolean canExact(Context c) {
+                  if (Build.VERSION.SDK_INT < 31) return true;
+                  AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                  return am.canScheduleExactAlarms();
+              }
+
+              static int count(Context c) {
+                  return prefs(c).getInt("count", 0);
+              }
+
+              private static void set(Context app, AlarmManager am, int code, long at, String title, String sub, String sound) {
+                  PendingIntent pi = pending(app, code, title, sub, sound, PendingIntent.FLAG_UPDATE_CURRENT);
+                  try {
+                      if (!canExact(app)) {
+                          am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+                          return;
+                      }
+                      Intent open = new Intent(app, MainActivity.class);
+                      PendingIntent show = PendingIntent.getActivity(app, 1, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                      am.setAlarmClock(new AlarmManager.AlarmClockInfo(at, show), pi);
+                  } catch (SecurityException e) {
+                      am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+                  }
+              }
+
+              private static PendingIntent pending(Context app, int code, String title, String sub, String sound, int flags) {
+                  Intent i = new Intent(app, AlarmReceiver.class);
+                  i.setAction(AlarmReceiver.ACTION_FIRE + "." + code);
+                  if (title != null) {
+                      i.putExtra("title", title);
+                      i.putExtra("sub", sub);
+                      i.putExtra("sound", sound);
+                  }
+                  return PendingIntent.getBroadcast(app, code, i, flags | PendingIntent.FLAG_IMMUTABLE);
+              }
+          }
+          EGGMAN_EOF
+          cat > 'android/app/src/main/java/com/theeggman/farms/BootReceiver.java' <<'EGGMAN_EOF'
+          package com.theeggman.farms;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+
+          /** The phone forgets alarms when it restarts or the app is updated: set them again. */
+          public class BootReceiver extends BroadcastReceiver {
+              @Override
+              public void onReceive(Context c, Intent i) {
+                  Alarms.restore(c);
+              }
+          }
+          EGGMAN_EOF
+          cat > 'android/app/src/main/java/com/theeggman/farms/Bridge.java' <<'EGGMAN_EOF'
+          package com.theeggman.farms;
+
+          import android.app.NotificationManager;
+          import android.content.Context;
+          import android.os.Build;
+          import android.os.PowerManager;
+          import android.print.PrintAttributes;
+          import android.print.PrintManager;
+          import android.webkit.JavascriptInterface;
+
+          import org.json.JSONObject;
+
+          /** What the farm web app can ask the phone to do (window.EggAndroid in JavaScript). */
+          final class Bridge {
+              private final MainActivity act;
+
+              Bridge(MainActivity act) { this.act = act; }
+
+              @JavascriptInterface
+              public int version() { return 1; }
+
+              /** Replace all real alarms with this list (JSON). Returns how many are set. */
+              @JavascriptInterface
+              public int setAlarms(String json) { return Alarms.schedule(act, json); }
+
+              @JavascriptInterface
+              public void ringNow(String title, String sub, String sound) { AlarmService.ring(act, title, sub, sound); }
+
+              @JavascriptInterface
+              public void stopAlarm() { AlarmService.stop(act, false); }
+
+              @JavascriptInterface
+              public String status() {
+                  JSONObject o = new JSONObject();
+                  try {
+                      NotificationManager nm = (NotificationManager) act.getSystemService(Context.NOTIFICATION_SERVICE);
+                      PowerManager pm = (PowerManager) act.getSystemService(Context.POWER_SERVICE);
+                      o.put("exact", Alarms.canExact(act));
+                      o.put("notifications", nm.areNotificationsEnabled());
+                      o.put("fullScreen", Build.VERSION.SDK_INT < 34 || nm.canUseFullScreenIntent());
+                      o.put("battery", pm.isIgnoringBatteryOptimizations(act.getPackageName()));
+                      o.put("scheduled", Alarms.count(act));
+                      o.put("android", Build.VERSION.SDK_INT);
+                  } catch (Exception ignored) { }
+                  return o.toString();
+              }
+
+              @JavascriptInterface
+              public void openSettings(String which) { act.runOnUiThread(() -> act.openSettings(which)); }
+
+              @JavascriptInterface
+              public void print() {
+                  act.runOnUiThread(() -> {
+                      PrintManager pm = (PrintManager) act.getSystemService(Context.PRINT_SERVICE);
+                      pm.print("Egg Man Farms", act.web.createPrintDocumentAdapter("EggManFarms"), new PrintAttributes.Builder().build());
+                  });
+              }
+          }
+          EGGMAN_EOF
+          cat > 'android/app/src/main/java/com/theeggman/farms/MainActivity.java' <<'EGGMAN_EOF'
+          package com.theeggman.farms;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          /** Opens the farm app from GitHub Pages and lets it set real phone alarms. */
+          public class MainActivity extends Activity {
+              static final String APP_URL = "__APP_URL__";
+              WebView web;
+
+              @Override
+              protected void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  getWindow().setStatusBarColor(0xFF1F4D2C);
+                  web = new WebView(this);
+                  setContentView(web);
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setDatabaseEnabled(true);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+                  s.setTextZoom(100);
+                  s.setUserAgentString(s.getUserAgentString() + " EggManAndroid/1");
+                  web.addJavascriptInterface(new Bridge(this), "EggAndroid");
+                  web.setWebChromeClient(new WebChromeClient());
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                          return openOutside(r.getUrl());
+                      }
+                  });
+                  if (state != null) web.restoreState(state);
+                  if (web.getUrl() == null) web.loadUrl(APP_URL);
+                  if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 7);
+                  }
+              }
+
+              /** WhatsApp, phone calls, email and other websites open in their own apps. */
+              boolean openOutside(Uri u) {
+                  String scheme = u.getScheme() == null ? "" : u.getScheme();
+                  String host = u.getHost() == null ? "" : u.getHost();
+                  if ((scheme.equals("https") || scheme.equals("http")) && host.equalsIgnoreCase(Uri.parse(APP_URL).getHost())) return false;
+                  try {
+                      Intent i = scheme.equals("intent") ? Intent.parseUri(u.toString(), Intent.URI_INTENT_SCHEME) : new Intent(Intent.ACTION_VIEW, u);
+                      i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                      startActivity(i);
+                  } catch (Exception ignored) { }
+                  return true;
+              }
+
+              void openSettings(String which) {
+                  String pkg = getPackageName();
+                  Intent i;
+                  if ("exact".equals(which) && Build.VERSION.SDK_INT >= 31) {
+                      i = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + pkg));
+                  } else if ("fullscreen".equals(which) && Build.VERSION.SDK_INT >= 34) {
+                      i = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + pkg));
+                  } else if ("notifications".equals(which)) {
+                      i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pkg);
+                  } else if ("battery".equals(which)) {
+                      i = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                  } else {
+                      i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg));
+                  }
+                  try {
+                      startActivity(i);
+                  } catch (Exception e) {
+                      try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg))); } catch (Exception ignored) { }
+                  }
+              }
+
+              @Override
+              protected void onSaveInstanceState(Bundle out) {
+                  super.onSaveInstanceState(out);
+                  web.saveState(out);
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (web != null && web.canGoBack()) web.goBack();
+                  else super.onBackPressed();
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  if (web != null) web.evaluateJavascript("window.EggApp && window.EggApp.onResume && window.EggApp.onResume()", null);
+              }
+          }
+          EGGMAN_EOF
+          # signing key: the SAME key every time, so phones can install updates over the old app
+          base64 -d > android/release.keystore <<'EGGMAN_EOF'
+          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
+          EGGMAN_EOF
+          # alarm sounds and icon come from your app files
+          for s in chime marimba rise bell; do cp "alarm-$s.mp3" "android/app/src/main/res/raw/alarm_$s.mp3"; done
+          cp icon-192.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          # the app opens your GitHub Pages address
+          OWNER="$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          sed -i "s#__APP_URL__#https://$OWNER.github.io/$REPO/#" android/app/src/main/java/com/theeggman/farms/MainActivity.java
+          grep -n "APP_URL =" android/app/src/main/java/com/theeggman/farms/MainActivity.java
+      - name: Build the APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Publish the APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk EggManFarms.apk
+          gh release view android >/dev/null 2>&1 || gh release create android --title "Egg Man Farms Android app" --notes "Install EggManFarms.apk on Android phones. Real alarms that ring with the screen off."
+          gh release upload android EggManFarms.apk --clobber
+          echo "Download: https://github.com/$GITHUB_REPOSITORY/releases/download/android/EggManFarms.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EggManFarms-apk
+          path: EggManFarms.apk
