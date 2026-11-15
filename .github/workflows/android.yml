@@ -140,6 +140,12 @@ jobs:
                       </intent-filter>
                   </receiver>
 
+                  <provider
+                      android:name=".ShareProvider"
+                      android:authorities="com.theeggman.farms.share"
+                      android:exported="false"
+                      android:grantUriPermissions="true" />
+
                   <service
                       android:name=".AlarmService"
                       android:exported="false"
@@ -649,7 +655,10 @@ jobs:
           package com.theeggman.farms;
 
           import android.app.NotificationManager;
+          import android.content.ClipData;
           import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
           import android.os.Build;
           import android.os.PowerManager;
           import android.print.PrintAttributes;
@@ -657,6 +666,9 @@ jobs:
           import android.webkit.JavascriptInterface;
 
           import org.json.JSONObject;
+
+          import java.io.File;
+          import java.io.FileOutputStream;
 
           /** What the farm web app can ask the phone to do (window.EggAndroid in JavaScript). */
           final class Bridge {
@@ -695,6 +707,44 @@ jobs:
 
               @JavascriptInterface
               public void openSettings(String which) { act.runOnUiThread(() -> act.openSettings(which)); }
+
+              /** Share a receipt (PDF or picture) to WhatsApp or any app. data = base64. */
+              @JavascriptInterface
+              public void shareFile(String base64, String mime, String name, String text) {
+                  try {
+                      byte[] bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT);
+                      String safe = name == null ? "receipt" : name.replaceAll("[^A-Za-z0-9._-]", "-");
+                      File dir = ShareProvider.folder(act);
+                      File[] old = dir.listFiles();
+                      if (old != null) for (File f : old) if (System.currentTimeMillis() - f.lastModified() > 86400000L) f.delete();
+                      File f = new File(dir, safe);
+                      try (FileOutputStream out = new FileOutputStream(f)) { out.write(bytes); }
+                      Uri uri = ShareProvider.uriFor(safe);
+                      Intent send = new Intent(Intent.ACTION_SEND);
+                      send.setType(mime == null || mime.isEmpty() ? "application/octet-stream" : mime);
+                      send.putExtra(Intent.EXTRA_STREAM, uri);
+                      if (text != null && !text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
+                      send.setClipData(ClipData.newRawUri(safe, uri));
+                      send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                      Intent chooser = Intent.createChooser(send, "Send receipt");
+                      chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                      act.runOnUiThread(() -> act.startActivity(chooser));
+                  } catch (Exception e) {
+                      act.runOnUiThread(() -> android.widget.Toast.makeText(act, "Could not share: " + e.getMessage(), android.widget.Toast.LENGTH_LONG).show());
+                  }
+              }
+
+              /** Laptop view: the wide layout shrunk to fit, with pinch-to-zoom. Remembered on this phone. */
+              @JavascriptInterface
+              public void setDesktopMode(boolean on) {
+                  act.getSharedPreferences("eggman_view", Context.MODE_PRIVATE).edit().putBoolean("desktop", on).apply();
+                  act.runOnUiThread(() -> { act.applyViewMode(); act.web.reload(); });
+              }
+
+              @JavascriptInterface
+              public boolean isDesktopMode() {
+                  return act.getSharedPreferences("eggman_view", Context.MODE_PRIVATE).getBoolean("desktop", false);
+              }
 
               @JavascriptInterface
               public void print() {
@@ -740,6 +790,7 @@ jobs:
                   s.setMediaPlaybackRequiresUserGesture(false);
                   s.setTextZoom(100);
                   s.setUserAgentString(s.getUserAgentString() + " EggManAndroid/1");
+                  applyViewMode();
                   web.addJavascriptInterface(new Bridge(this), "EggAndroid");
                   web.setWebChromeClient(new WebChromeClient());
                   web.setWebViewClient(new WebViewClient() {
@@ -753,6 +804,17 @@ jobs:
                   if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                       requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 7);
                   }
+              }
+
+              /** Normal phone view, or "laptop view" (wide page shrunk to fit, pinch to zoom). */
+              void applyViewMode() {
+                  boolean desk = getSharedPreferences("eggman_view", MODE_PRIVATE).getBoolean("desktop", false);
+                  WebSettings s = web.getSettings();
+                  s.setUseWideViewPort(desk);
+                  s.setLoadWithOverviewMode(desk);
+                  s.setSupportZoom(true);
+                  s.setBuiltInZoomControls(true);
+                  s.setDisplayZoomControls(false);
               }
 
               /** WhatsApp, phone calls, email and other websites open in their own apps. */
@@ -806,6 +868,72 @@ jobs:
                   super.onResume();
                   if (web != null) web.evaluateJavascript("window.EggApp && window.EggApp.onResume && window.EggApp.onResume()", null);
               }
+          }
+          EGGMAN_EOF
+          cat > 'android/app/src/main/java/com/theeggman/farms/ShareProvider.java' <<'EGGMAN_EOF'
+          package com.theeggman.farms;
+
+          import android.content.ContentProvider;
+          import android.content.ContentValues;
+          import android.database.Cursor;
+          import android.database.MatrixCursor;
+          import android.net.Uri;
+          import android.os.ParcelFileDescriptor;
+          import android.provider.OpenableColumns;
+
+          import java.io.File;
+          import java.io.FileNotFoundException;
+
+          /** Lets WhatsApp and other apps read a receipt file the farm app just made (only files in its share folder). */
+          public class ShareProvider extends ContentProvider {
+              static final String AUTHORITY = "com.theeggman.farms.share";
+
+              static File folder(android.content.Context c) {
+                  File d = new File(c.getCacheDir(), "share");
+                  if (!d.exists()) d.mkdirs();
+                  return d;
+              }
+
+              static Uri uriFor(String name) {
+                  return Uri.parse("content://" + AUTHORITY + "/" + Uri.encode(name));
+              }
+
+              private File fileFor(Uri uri) throws FileNotFoundException {
+                  String name = uri.getLastPathSegment();
+                  if (name == null || name.contains("/") || name.contains("..")) throw new FileNotFoundException("bad name");
+                  File f = new File(folder(getContext()), name);
+                  if (!f.exists()) throw new FileNotFoundException(name);
+                  return f;
+              }
+
+              @Override public boolean onCreate() { return true; }
+
+              @Override
+              public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
+                  return ParcelFileDescriptor.open(fileFor(uri), ParcelFileDescriptor.MODE_READ_ONLY);
+              }
+
+              @Override
+              public String getType(Uri uri) {
+                  String n = uri.getLastPathSegment() == null ? "" : uri.getLastPathSegment().toLowerCase();
+                  if (n.endsWith(".pdf")) return "application/pdf";
+                  if (n.endsWith(".png")) return "image/png";
+                  if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+                  return "application/octet-stream";
+              }
+
+              @Override
+              public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) {
+                  File f;
+                  try { f = fileFor(uri); } catch (FileNotFoundException e) { return null; }
+                  MatrixCursor c = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
+                  c.addRow(new Object[]{f.getName(), f.length()});
+                  return c;
+              }
+
+              @Override public Uri insert(Uri uri, ContentValues v) { return null; }
+              @Override public int delete(Uri uri, String s, String[] a) { return 0; }
+              @Override public int update(Uri uri, ContentValues v, String s, String[] a) { return 0; }
           }
           EGGMAN_EOF
           # signing key: the SAME key every time, so phones can install updates over the old app
