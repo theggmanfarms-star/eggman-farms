@@ -1,7 +1,7 @@
 /* The Egg Man Farms — storage on the phone (works offline) and fast sync with Google Sheets. */
 (function () {
   'use strict';
-  var TYPES = ['flocks', 'daily', 'tasks', 'sales', 'payments', 'customers', 'stock', 'feed', 'med', 'expenses'];
+  var TYPES = ['flocks', 'daily', 'tasks', 'sales', 'payments', 'customers', 'stock', 'feed', 'med', 'expenses', 'waiting', 'moves'];
 
   // ---------- SHA-256 (works even where the browser's crypto is not available) ----------
   var sha256 = (function () {
@@ -74,7 +74,7 @@
 
   // ---------- the farm data held in memory ----------
   var Store = {
-    state: { settings: {}, users: [], products: [], items: [], recipes: [], template: [] },
+    state: { settings: {}, users: [], products: [], items: [], recipes: [], template: [], priceHistory: [] },
     index: {},
     meta: { since: 0, masterHash: '', lastSync: 0, lastError: '' },
     session: null,
@@ -113,7 +113,7 @@
     setInterval(function () { sync(); }, 60000);
   }
   function applyMaster(m) {
-    ['settings', 'users', 'products', 'items', 'recipes', 'template'].forEach(function (k) { if (m[k]) Store.state[k] = m[k]; });
+    ['settings', 'users', 'products', 'items', 'recipes', 'template', 'priceHistory'].forEach(function (k) { if (m[k]) Store.state[k] = m[k]; });
   }
 
   // Save one or more records on the phone straight away, then sync in the background.
@@ -242,6 +242,13 @@
     await sync(true);
     return res;
   }
+  // Owner only, needs internet: a backup copy of the Sheet in Google Drive (before resetting a section).
+  async function backupNow(pin, why) {
+    if (!navigator.onLine) throw new Error('This needs internet (to make the backup copy first).');
+    var res = await api({ action: 'backup', userId: Store.session.user.id, token: Store.session.token, pin: String(pin || ''), why: why || '' });
+    if (!res.ok) throw new Error(res.error || 'Could not make the backup.');
+    return res;
+  }
   // Owner only, needs internet: replace one settings tab (Products, Users, Settings, Items, Schedule, Recipes).
   async function saveMaster(table, rows) {
     if (!navigator.onLine) throw new Error('Saving settings needs internet. Your other records still work offline.');
@@ -260,7 +267,7 @@
   }
   async function fullRefresh() { Store.meta.since = 0; Store.meta.masterHash = ''; await kvSet('meta', Store.meta); return sync(true); }
 
-  window.EggCore = { TYPES: TYPES, Store: Store, init: init, save: save, sync: sync, login: login, logout: logout, pending: pending,
+  window.EggCore = { TYPES: TYPES, Store: Store, init: init, save: save, backupNow: backupNow, sync: sync, login: login, logout: logout, pending: pending,
     configured: configured, fullRefresh: fullRefresh, saveMaster: saveMaster, useNewPin: useNewPin, startFresh: startFresh, uid: uid, sha256: sha256, kvGet: kvGet, kvSet: kvSet,
     onChange: function (f) { Store.listeners.push(f); } };
 })();

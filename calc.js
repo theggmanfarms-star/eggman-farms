@@ -103,7 +103,38 @@ var Calc = (function () {
         if (p && p.kind === 'hen' && it.flockId === flock.id) gone += int(it.qty);
       });
     });
+    live(state.moves).forEach(function (m) {
+      if (uptoDate && m.date > uptoDate) return;
+      if (m.fromFlockId === flock.id) gone += int(m.birds);
+      if (m.toFlockId === flock.id) gone -= int(m.birds);
+    });
     return int(flock.chicks) - gone;
+  }
+  // ---------- WHITE and BROWN eggs ----------
+  // Entries made before colours existed count as the farm's main colour (Settings › defaultEggColour, brown at first).
+  function defaultColour(state) { return String((state.settings || {}).defaultEggColour || '').toLowerCase() === 'white' ? 'white' : 'brown'; }
+  function flockColour(state, f) { var c = f && String(f.colour || '').toLowerCase(); return c === 'white' || c === 'brown' ? c : defaultColour(state); }
+  function lineColour(state, l) { var c = l && String(l.colour || '').toLowerCase(); return c === 'white' || c === 'brown' ? c : defaultColour(state); }
+  // colours of the birds in a coop on a day (its own + birds moved in that are a different colour)
+  function flockColours(state, f, date) {
+    var set = {}; set[flockColour(state, f)] = 1;
+    live(state.moves).forEach(function (m) { if (m.toFlockId === f.id && (!date || m.date <= date)) set[m.colour === 'white' ? 'white' : 'brown'] = 1; });
+    return Object.keys(set).sort();
+  }
+  // colours the farm uses — when only one, the app shows no colour choices at all
+  function coloursInUse(state) {
+    var set = {}; set[defaultColour(state)] = 1;
+    live(state.flocks).forEach(function (f) { set[flockColour(state, f)] = 1; });
+    live(state.moves).forEach(function (m) { set[m.colour === 'white' ? 'white' : 'brown'] = 1; });
+    return ['brown', 'white'].filter(function (c) { return set[c]; });
+  }
+  function cz() { return { good: 0, cracked: 0, white: { good: 0, cracked: 0 }, brown: { good: 0, cracked: 0 } }; }
+  function cadd(t, e, sign, col) {
+    sign = sign === undefined ? 1 : sign;
+    t.good += sign * e.good; t.cracked += sign * e.cracked;
+    if (e.white) { t.white.good += sign * e.white.good; t.white.cracked += sign * e.white.cracked; t.brown.good += sign * e.brown.good; t.brown.cracked += sign * e.brown.cracked; }
+    else { var c = col || e.colour || 'brown'; t[c].good += sign * e.good; t[c].cracked += sign * e.cracked; }
+    return t;
   }
   function birdsAtStartOf(state, flock, date) { return birdsAlive(state, flock, addDays(date, -1)); }
 
@@ -121,23 +152,38 @@ var Calc = (function () {
 
   // ---------- eggs ----------
   // A coop can have several collections in one day; this adds them up.
+  // Feed used in a daily record, in kg. Records made before v2 stored bags: those are converted.
+  function feedKgOf(state, d, items) {
+    if (!d) return 0;
+    if (d.feedKg !== undefined && d.feedKg !== null && d.feedKg !== '') return num(d.feedKg);
+    if (num(d.feedBags) > 0) return itemKg(state, (items || byId(state.items))[d.feedItemId], d.feedBags, 'bag');
+    return 0;
+  }
+  function kg1(x) { return Math.round(x * 10) / 10; }
   function dayRecords(state, flockId, date, excludeId) {
     return live(state.daily).filter(function (x) { return x.flockId === flockId && x.date === date && x.id !== excludeId; });
   }
   function dayTotal(state, flockId, date, excludeId) {
-    var t = { good: 0, cracked: 0, total: 0, deaths: 0, culls: 0, feedBags: 0, count: 0 };
+    var t = { good: 0, cracked: 0, total: 0, deaths: 0, culls: 0, feedKg: 0, count: 0, white: { good: 0, cracked: 0 }, brown: { good: 0, cracked: 0 } }, items = byId(state.items);
     dayRecords(state, flockId, date, excludeId).forEach(function (x) {
-      var e = dailyEggs(state, x); t.good += e.good; t.cracked += e.cracked; t.total += e.total;
-      t.deaths += int(x.deaths); t.culls += int(x.culls); t.feedBags += num(x.feedBags); t.count++;
+      var e = dailyEggs(state, x); cadd(t, e, 1); t.total += e.total;
+      t.deaths += int(x.deaths); t.culls += int(x.culls); t.feedKg += feedKgOf(state, x, items); t.count++;
     });
     return t;
   }
   function weekStart(date) { var d = new Date(parseDay(date)).getUTCDay(); return addDays(date, -((d + 6) % 7)); } // Monday
   function dailyEggs(state, d) {
-    var epc = settingsOf(state).eggsPerCrate;
-    var good = int(d.goodCrates) * epc + int(d.goodPieces);
-    var cracked = int(d.cracked);
-    return { good: good, cracked: cracked, total: good + cracked };
+    var epc = settingsOf(state).eggsPerCrate, w = { good: 0, cracked: 0 }, b = { good: 0, cracked: 0 };
+    if (d.split) {   // a coop with white AND brown layers: counted apart
+      w = { good: int(d.whiteCrates) * epc + int(d.whitePieces), cracked: int(d.whiteCracked) };
+      b = { good: int(d.brownCrates) * epc + int(d.brownPieces), cracked: int(d.brownCracked) };
+    } else {
+      var f = (state.flocks || []).filter(function (x) { return x.id === d.flockId; })[0];
+      var one = { good: int(d.goodCrates) * epc + int(d.goodPieces), cracked: int(d.cracked) };
+      if (flockColour(state, f) === 'white') w = one; else b = one;
+    }
+    var good = w.good + b.good, cracked = w.cracked + b.cracked;
+    return { good: good, cracked: cracked, total: good + cracked, white: w, brown: b };
   }
   function layRate(state, d) {
     var flock = byId(state.flocks)[d.flockId];
@@ -161,9 +207,10 @@ var Calc = (function () {
     var p = productMap(state)[line.productId];
     if (!p) return { good: 0, cracked: 0 };
     var pcs = int(line.qty) * (int(p.eggsPerUnit) || 0);
-    if (p.kind === 'good') return { good: pcs, cracked: 0 };
-    if (p.kind === 'cracked') return { good: 0, cracked: pcs };
-    return { good: 0, cracked: 0 };
+    var col = lineColour(state, line);
+    if (p.kind === 'good') return { good: pcs, cracked: 0, colour: col };
+    if (p.kind === 'cracked') return { good: 0, cracked: pcs, colour: col };
+    return { good: 0, cracked: 0, colour: col };
   }
   function isCarrySale(state, sale) {
     var u = userMap(state)[sale.by];
@@ -172,33 +219,34 @@ var Calc = (function () {
 
   // Eggs sitting in the farm store (not with salespeople).
   function eggStore(state, uptoDate) {
-    var good = 0, cracked = 0;
+    var t = cz();
     live(state.daily).forEach(function (d) {
       if (uptoDate && d.date > uptoDate) return;
-      var e = dailyEggs(state, d); good += e.good; cracked += e.cracked;
+      cadd(t, dailyEggs(state, d), 1);
     });
     live(state.stock).forEach(function (m) {
       if (uptoDate && m.date > uptoDate) return;
       if (m.kind === 'adjust') {
-        if (m.eggKind === 'cracked') cracked += int(m.pieces); else good += int(m.pieces);
+        var k = m.eggKind === 'cracked' ? 'cracked' : 'good', e = { good: 0, cracked: 0 }; e[k] = int(m.pieces);
+        cadd(t, e, 1, lineColour(state, m));
         return;
       }
       var sign = m.kind === 'out' ? -1 : m.kind === 'return' ? 1 : 0;
-      (m.lines || []).forEach(function (l) { var e = lineEggs(state, l); good += sign * e.good; cracked += sign * e.cracked; });
+      (m.lines || []).forEach(function (l) { cadd(t, lineEggs(state, l), sign); });
     });
     live(state.sales).forEach(function (s) {
       if (uptoDate && s.date > uptoDate) return;
       if (isCarrySale(state, s)) return;
-      (s.items || []).forEach(function (l) { var e = lineEggs(state, l); good -= e.good; cracked -= e.cracked; });
+      (s.items || []).forEach(function (l) { cadd(t, lineEggs(state, l), -1); });
     });
-    return { good: good, cracked: cracked };
+    return t;
   }
 
   // A salesperson's eggs for one day: opening + taken − sold − returned − broken = still with them.
   function carry(state, userId, date) {
-    function zero() { return { good: 0, cracked: 0 }; }
+    var zero = cz;
     var opening = zero(), out = zero(), sold = zero(), back = zero(), broken = zero(), returned = false;
-    function add(t, e, sign) { t.good += sign * e.good; t.cracked += sign * e.cracked; }
+    function add(t, e, sign, col) { cadd(t, e, sign, col); }
     live(state.stock).forEach(function (m) {
       if (m.salesUserId !== userId || m.date > date || m.kind === 'adjust') return;
       var today = m.date === date;
@@ -208,8 +256,11 @@ var Calc = (function () {
         if (m.kind === 'return') add(today ? back : opening, e, today ? 1 : -1);
       });
       if (m.kind === 'return') {
-        var b = { good: int(m.brokenGood), cracked: int(m.brokenCracked) };
-        add(today ? broken : opening, b, today ? 1 : -1);
+        // broken eggs: the main fields are the main colour; brokenWhite… / brokenBrown… when both colours are used
+        var main = defaultColour(state), other = main === 'white' ? 'brown' : 'white', cap = function (c) { return c === 'white' ? 'White' : 'Brown'; };
+        var bm = { good: int(m.brokenGood), cracked: int(m.brokenCracked) }, bo = { good: int(m['broken' + cap(other) + 'Good']), cracked: int(m['broken' + cap(other) + 'Cracked']) };
+        add(today ? broken : opening, bm, today ? 1 : -1, main);
+        add(today ? broken : opening, bo, today ? 1 : -1, other);
         if (today) returned = true;
       }
     });
@@ -218,12 +269,14 @@ var Calc = (function () {
       var today = s.date === date;
       (s.items || []).forEach(function (l) { add(today ? sold : opening, lineEggs(state, l), today ? 1 : -1); });
     });
+    var rem = function (k) { return { good: opening[k].good + out[k].good - sold[k].good - back[k].good - broken[k].good, cracked: opening[k].cracked + out[k].cracked - sold[k].cracked - back[k].cracked - broken[k].cracked }; };
     var remaining = {
       good: opening.good + out.good - sold.good - back.good - broken.good,
-      cracked: opening.cracked + out.cracked - sold.cracked - back.cracked - broken.cracked
+      cracked: opening.cracked + out.cracked - sold.cracked - back.cracked - broken.cracked,
+      white: rem('white'), brown: rem('brown')
     };
     return { opening: opening, out: out, sold: sold, returned: back, broken: broken, remaining: remaining, returnRecorded: returned,
-      balanced: returned && remaining.good === 0 && remaining.cracked === 0 };
+      balanced: returned && remaining.good === 0 && remaining.cracked === 0 && remaining.white.good === 0 && remaining.white.cracked === 0 };
   }
 
   // ---------- money: sales, customers ----------
@@ -251,10 +304,13 @@ var Calc = (function () {
     return { openingCents: c ? cents(c.opening) : 0, rows: rows, balanceCents: bal, balance: fromCents(bal) };
   }
   function customerBalance(state, customerId, excludeId) { return customerLedger(state, customerId, excludeId).balanceCents; }
-  function priceFor(product, customer) {
+  // White eggs use the white prices when the owner has set them (more than 0); otherwise the normal price.
+  function priceFor(product, customer, colour) {
     if (!product) return 0;
-    var wholesale = customer && customer.priceType === 'wholesale' && num(product.wholesale) > 0;
-    return num(wholesale ? product.wholesale : product.retail);
+    var white = colour === 'white' && num(product.retailWhite) > 0;
+    var r = white ? num(product.retailWhite) : num(product.retail), w = white ? num(product.wholesaleWhite) : num(product.wholesale);
+    var wholesale = customer && customer.priceType === 'wholesale' && w > 0;
+    return wholesale ? w : r;
   }
 
   function validateSale(state, sale, user) {
@@ -291,15 +347,19 @@ var Calc = (function () {
       if (next < 0) warnings.push('Customer paid more than owed: they will have GH₵ ' + fromCents(-next).toFixed(2) + ' credit.');
     }
     // stock checks (warnings only: another phone may not have synced yet)
-    var need = { good: 0, cracked: 0 };
-    items.forEach(function (it) { var e = lineEggs(state, it); need.good += e.good; need.cracked += e.cracked; });
+    var need = cz();
+    items.forEach(function (it) { cadd(need, lineEggs(state, it), 1); });
     if (need.good || need.cracked) {
-      var have;
+      var have, two = coloursInUse(state).length > 1;
       var other = Object.assign({}, state, { sales: live(state.sales).filter(function (s) { return s.id !== sale.id; }) });
       if (user && user.role === 'sales') have = carry(other, user.id, sale.date).remaining;
       else have = eggStore(other, sale.date);
-      if (need.good > have.good) warnings.push('Only ' + cratesText(state, have.good) + ' good eggs ' + (user && user.role === 'sales' ? 'recorded with you' : 'in the store') + '.');
-      if (need.cracked > have.cracked) warnings.push('Only ' + cratesText(state, have.cracked) + ' cracked eggs available.');
+      var where = user && user.role === 'sales' ? 'recorded with you' : 'in the store';
+      ['brown', 'white'].forEach(function (c) {
+        var lab = two ? c + ' ' : '';
+        if (need[c].good > have[c].good) warnings.push('Only ' + cratesText(state, Math.max(0, have[c].good)) + ' good ' + lab + 'eggs ' + where + '.');
+        if (need[c].cracked > have[c].cracked) warnings.push('Only ' + cratesText(state, Math.max(0, have[c].cracked)) + ' cracked ' + lab + 'eggs available.');
+      });
     }
     return { errors: errors, warnings: warnings, totals: t, prevCents: prev, newCents: next };
   }
@@ -312,10 +372,11 @@ var Calc = (function () {
     if (!d.date) errors.push('Choose the date.');
     if (d.date < flock.arrival) errors.push('Date is before this flock arrived (' + flock.arrival + ').');
     if (d.today && d.date > d.today) errors.push('Date cannot be in the future.');
-    ['goodCrates', 'goodPieces', 'cracked', 'deaths', 'culls', 'feedBags', 'water'].forEach(function (k) {
+    ['goodCrates', 'goodPieces', 'cracked', 'deaths', 'culls', 'feedKg', 'feedBags', 'water'].forEach(function (k) {
       if (num(d[k]) < 0) errors.push('Numbers cannot be negative.');
     });
-    ['goodCrates', 'goodPieces', 'cracked', 'deaths', 'culls'].forEach(function (k) {
+    ['goodCrates', 'goodPieces', 'cracked', 'deaths', 'culls', 'whiteCrates', 'whitePieces', 'whiteCracked', 'brownCrates', 'brownPieces', 'brownCracked'].forEach(function (k) {
+      if (num(d[k]) < 0) errors.push('Numbers cannot be negative.');
       if (Math.round(num(d[k])) !== num(d[k])) errors.push('Eggs and birds must be whole numbers.');
     });
     var others = dayTotal(state, d.flockId, d.date, d.id), round = others.count + 1;
@@ -326,7 +387,9 @@ var Calc = (function () {
     if (round > 1) warnings.push('This is collection ' + round + ' for Coop ' + flock.coop + ' on ' + d.date + '. Its eggs are added to the day: ' + cratesText(state, dayEggs) + ' in total.');
     if (dayEggs > birds) errors.push((round > 1 ? 'With this collection the day has ' : '') + dayEggs + ' eggs — more than the ' + birds + ' birds in Coop ' + flock.coop + '.');
     if (others.deaths + others.culls + int(d.deaths) + int(d.culls) > birds) errors.push('Deaths are more than the birds left.');
-    if (num(d.feedBags) > 0 && !d.feedItemId) errors.push('Choose the type of feed used.');
+    var thisKg = feedKgOf(state, d);
+    if (thisKg > 0 && !d.feedItemId) errors.push('Choose the type of feed used.');
+    if (thisKg > 0 && birds > 0 && thisKg / birds > 0.4) warnings.push(kg1(thisKg) + ' kg of feed is ' + Math.round(thisKg / birds * 1000) + ' g per bird — a laying hen eats about 110–130 g a day. Check the number.');
     // compare with this coop's last 7 records
     // compare with this coop's last 7 days (whole-day totals)
     var pastDates = {};
@@ -334,24 +397,49 @@ var Calc = (function () {
     var past = Object.keys(pastDates).sort().slice(-7).map(function (dt) { return dayTotal(state, d.flockId, dt); });
     if (past.length >= 3) {
       var avg = function (f) { return past.reduce(function (a, x) { return a + f(x); }, 0) / past.length; };
-      var aEggs = avg(function (x) { return x.total; }), aCr = avg(function (x) { return x.cracked; }), aFeed = avg(function (x) { return x.feedBags; });
-      var dayCr = others.cracked + int(d.cracked), dayFeed = others.feedBags + num(d.feedBags);
+      var aEggs = avg(function (x) { return x.total; }), aCr = avg(function (x) { return x.cracked; }), aFeed = avg(function (x) { return x.feedKg; });
+      var dayCr = others.cracked + int(d.cracked), dayFeed = others.feedKg + thisKg;
       if (round === 1 && aEggs > 0 && dayEggs < aEggs * 0.85) warnings.push('Eggs are ' + Math.round((1 - dayEggs / aEggs) * 100) + '% lower than this coop’s recent average (' + cratesText(state, Math.round(aEggs)) + ' a day). If you collect again later, add it as another collection.');
       if (aEggs > 0 && dayEggs > aEggs * 1.15) warnings.push('Eggs for the day are ' + Math.round((dayEggs / aEggs - 1) * 100) + '% higher than the recent average (' + cratesText(state, Math.round(aEggs)) + ').');
       if (dayCr >= 5 && dayCr > aCr * 2) warnings.push(dayCr + ' cracked eggs today is higher than usual (average ' + Math.round(aCr) + ').');
-      if (round === 1 && aFeed > 0 && Math.abs(dayFeed - aFeed) > aFeed * 0.25) warnings.push('Feed used (' + dayFeed + ' bags) is different from usual (' + (Math.round(aFeed * 10) / 10) + ' bags).');
+      if (round === 1 && aFeed > 0 && Math.abs(dayFeed - aFeed) > aFeed * 0.25) warnings.push('Feed used (' + kg1(dayFeed) + ' kg) is different from usual (' + kg1(aFeed) + ' kg a day).');
     }
     var deadLimit = Math.max(3, Math.ceil(birds * 0.005));
     if (int(d.deaths) >= deadLimit) warnings.push(int(d.deaths) + ' deaths in one day is high — consider reporting an emergency and calling the vet.');
-    return { errors: errors, warnings: warnings, eggs: e, round: round, dayEggs: dayEggs, birdsBefore: birds,
+    return { errors: errors, warnings: warnings, eggs: e, round: round, dayEggs: dayEggs, birdsBefore: birds, feedKg: thisKg,
+      gramsPerBird: birds > 0 ? Math.round((others.feedKg + thisKg) / birds * 1000) : 0,
       birdsAfter: birds - others.deaths - others.culls - int(d.deaths) - int(d.culls),
       layRate: birds > 0 ? Math.round(dayEggs / birds * 1000) / 10 : 0 };
   }
 
   // ---------- feed: stock, average cost, cost per coop ----------
+  // Everything in the feed store is counted in kg. A bag = kgPerBag (50); a litre of oil = kgPerBag of that item (0.92).
   function itemKg(state, item, qty, unit) {
-    var kgBag = num(item && item.kgPerBag) || settingsOf(state).kgPerBag;
-    return (unit || (item && item.unit)) === 'bag' ? num(qty) * kgBag : num(qty);
+    var u = unit || (item && item.unit);
+    if (u === 'bag') return num(qty) * (num(item && item.kgPerBag) || settingsOf(state).kgPerBag);
+    if (u === 'litre' || u === 'l') return num(qty) * (num(item && item.kgPerBag) || 0.92);
+    return num(qty);
+  }
+  // Recipes are written in PARTS (e.g. maize 50, soya 20 …). For a batch of N kg each ingredient gets N × part ÷ all parts.
+  function recipeParts(recipe) { return (recipe && recipe.lines || []).reduce(function (a, l) { return a + num(l.kg); }, 0); }
+  function recipeBatch(state, recipe, batchKg) {
+    var total = recipeParts(recipe), items = byId(state.items), done = 0;
+    var lines = (recipe && recipe.lines || []).filter(function (l) { return num(l.kg) > 0; }).map(function (l) {
+      var kg = total ? Math.round(batchKg * num(l.kg) / total * 100) / 100 : 0;
+      done += kg;
+      var it = items[l.itemId] || {};
+      return { itemId: l.itemId, parts: num(l.kg), pct: total ? Math.round(num(l.kg) / total * 1000) / 10 : 0, kg: kg,
+        litres: it.unit === 'litre' ? Math.round(kg / (num(it.kgPerBag) || 0.92) * 100) / 100 : null };
+    });
+    // put any rounding difference on the biggest ingredient so the batch adds up exactly
+    var diff = Math.round((batchKg - done) * 100) / 100;
+    if (lines.length && diff) { var big = lines.reduce(function (a, b) { return b.kg > a.kg ? b : a; }); big.kg = Math.round((big.kg + diff) * 100) / 100; }
+    return { lines: lines, parts: total, kg: batchKg };
+  }
+  // Feed types made on the farm (from a recipe or mixed before) — the rest are bought ready-made.
+  function isOwnMix(state, itemId) {
+    if (itemId === 'i-ownmix') return true;
+    return (state.recipes || []).some(function (r) { return r.outputItemId === itemId; }) || live(state.feed).some(function (m) { return m.kind === 'mix' && m.outputItemId === itemId; });
   }
   function feedState(state) {
     var items = byId(state.items);
@@ -375,7 +463,7 @@ var Calc = (function () {
     }
     var events = [];
     live(state.feed).forEach(function (m) { events.push({ date: m.date, createdAt: m.createdAt, m: m }); });
-    live(state.daily).forEach(function (d) { if (num(d.feedBags) > 0 && d.feedItemId) events.push({ date: d.date, createdAt: d.createdAt, d: d }); });
+    live(state.daily).forEach(function (d) { if (d.feedItemId && feedKgOf(state, d, items) > 0) events.push({ date: d.date, createdAt: d.createdAt, d: d }); });
     var used = {}; // flockId|month -> cents
     var mixCost = {};
     sortChrono(events).forEach(function (ev) {
@@ -392,7 +480,7 @@ var Calc = (function () {
           mixCost[m.id] = { kg: kgOut, cents: Math.round(total), perKg: kgOut ? total / kgOut / 100 : 0 };
         }
       } else {
-        var d = ev.d, kgUsed = itemKg(state, items[d.feedItemId], d.feedBags, 'bag');
+        var d = ev.d, kgUsed = feedKgOf(state, d, items);
         var c = take(d.feedItemId, kgUsed);
         var key = d.flockId + '|' + monthOf(d.date);
         used[key] = (used[key] || 0) + c;
@@ -403,9 +491,10 @@ var Calc = (function () {
       if (it.category !== 'feed' && it.category !== 'ingredient') return;
       var s = st(it.id), kgBag = num(it.kgPerBag) || settingsOf(state).kgPerBag;
       var avg = s.kg > 0 ? s.value / s.kg : s.lastAvg;
-      var shown = it.unit === 'bag' ? s.kg / kgBag : s.kg;
+      var litre = it.unit === 'litre', shown = it.unit === 'bag' ? s.kg / kgBag : litre ? s.kg / (num(it.kgPerBag) || 0.92) : s.kg;
+      kgBag = settingsOf(state).kgPerBag;
       out[it.id] = { kg: Math.round(s.kg * 100) / 100, bags: Math.round(s.kg / kgBag * 10) / 10, shown: Math.round(shown * 10) / 10,
-        unit: it.unit === 'bag' ? 'bags' : 'kg', avgPerKg: Math.round(avg) / 100, valueCents: Math.round(Math.max(0, s.value)),
+        unit: it.unit === 'bag' ? 'bags' : litre ? 'litres' : 'kg', avgPerKg: Math.round(avg) / 100, valueCents: Math.round(Math.max(0, s.value)),
         low: s.touched && num(it.lowLevel) > 0 && shown <= num(it.lowLevel), tracked: s.touched, negative: s.kg < -1e-9 };
     });
     Object.keys(used).forEach(function (k) { used[k] = Math.round(used[k]); });
@@ -585,10 +674,10 @@ var Calc = (function () {
   // ---------- dashboard ----------
   function dashboard(state, today) {
     var flocks = activeFlocks(state, today);
-    var eggsToday = { good: 0, cracked: 0, total: 0 }, deaths = 0, birdsBefore = 0, recorded = 0, seenFlock = {};
+    var eggsToday = { good: 0, cracked: 0, total: 0, white: { good: 0, cracked: 0 }, brown: { good: 0, cracked: 0 } }, deaths = 0, birdsBefore = 0, recorded = 0, seenFlock = {};
     live(state.daily).forEach(function (d) {
       if (d.date !== today) return;
-      var e = dailyEggs(state, d); eggsToday.good += e.good; eggsToday.cracked += e.cracked; eggsToday.total += e.total;
+      var e = dailyEggs(state, d); cadd(eggsToday, e, 1); eggsToday.total += e.total;
       deaths += int(d.deaths) + int(d.culls);
       if (seenFlock[d.flockId]) return;
       seenFlock[d.flockId] = 1; recorded++;
@@ -698,7 +787,8 @@ var Calc = (function () {
     var roles = function (v, d) { return String(v === undefined || v === '' ? d : v).toLowerCase().split(/[,;\s]+/).filter(Boolean); };
     var before = int(s.appAlarmBefore); if ([0, 5, 10, 15, 30, 60].indexOf(before) < 0) before = 0;
     var sound = String(s.appAlarmSound || 'chime').toLowerCase(); if (['chime', 'marimba', 'rise', 'bell'].indexOf(sound) < 0) sound = 'chime';
-    return { sound: sound, before: before, collect: roles(s.appAlarmCollect, 'owner,manager,farmhand'), tasks: roles(s.appAlarmTasks, 'owner,manager,farmhand'),
+    var ft = parseTimes(s.followUpTime)[0] || '09:00', fd = int(s.waitFollowDays) > 0 ? int(s.waitFollowDays) : 21;
+    return { sound: sound, before: before, collect: roles(s.appAlarmCollect, 'owner,manager,farmhand'), tasks: roles(s.appAlarmTasks, 'owner,manager,farmhand'), followTime: ft, followDays: fd,
       times: parseTimes(s.collectionTimes), hour: s.alarmHour === undefined || s.alarmHour === '' ? 6 : int(s.alarmHour) };
   }
   function parseTimes(text) {
@@ -737,7 +827,124 @@ var Calc = (function () {
           title: x.kind + ': ' + x.title, sub: where + ' · ' + t + (A.before ? ' (in ' + A.before + ' minutes)' : '') });
       });
     });
+    // waiting-list follow-ups: the person who took the request, and the owner
+    [date, addDays(date, 1)].forEach(function (d) {
+      live(state.waiting).forEach(function (w) {
+        if (w.status !== 'waiting' || w.nextCall !== d) return;
+        if (!(role === 'owner' || w.by === user.id)) return;
+        var r = shiftBack(d, A.followTime, A.before);
+        out.push({ key: 'wait|' + w.id + '|' + d, kind: 'waiting', waitId: w.id, date: r.date, time: r.time, eventTime: A.followTime, eventDate: d,
+          title: 'Call ' + (w.name || 'customer'), sub: (w.phone || '') + ' · wants ' + waitWants(state, w) + ' · waiting ' + dayDiff(w.date, d) + ' days' });
+      });
+    });
     return out.filter(function (a) { return a.date === date; }).sort(function (a, b) { return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; });
+  }
+
+  // ---------- WAITING LIST: people who want to buy before the product is ready ----------
+  function waitWants(state, w) {
+    var p = productMap(state)[w.productId];
+    return (num(w.qty) ? num(w.qty) + ' × ' : '') + (p ? p.name : (w.wants || 'something'));
+  }
+  function waitingList(state, user, today) {
+    var list = live(state.waiting).filter(function (w) { return !user || user.role === 'owner' || user.role === 'manager' || w.by === user.id; });
+    var callNow = [], later = [], closed = [];
+    list.forEach(function (w) {
+      var x = { w: w, days: dayDiff(w.date, today), lastCall: (w.calls || []).slice(-1)[0] || null, wants: waitWants(state, w) };
+      if (w.status !== 'waiting') closed.push(x);
+      else if (w.nextCall && w.nextCall <= today) callNow.push(x);
+      else later.push(x);
+    });
+    var byDate = function (a, b) { return a.w.date < b.w.date ? -1 : a.w.date > b.w.date ? 1 : 0; };
+    callNow.sort(byDate); later.sort(function (a, b) { return a.w.nextCall < b.w.nextCall ? -1 : 1; });
+    closed.sort(function (a, b) { return b.w.updatedAt - a.w.updatedAt; });
+    return { callNow: callNow, later: later, closed: closed, open: callNow.length + later.length };
+  }
+  // Record a phone call: still waiting → next call in N days; bought / not interested → closed.
+  function waitAfterCall(state, w, result, date, note, by, days) {
+    var A = alarmSettings(state), n = int(days) > 0 ? int(days) : (int(w.followDays) || A.followDays);
+    var out = JSON.parse(JSON.stringify(w));
+    out.calls = (out.calls || []).concat([{ date: date, by: by, result: result, note: note || '' }]);
+    if (result === 'waiting') { out.status = 'waiting'; out.nextCall = addDays(date, n); }
+    else { out.status = result === 'bought' ? 'bought' : 'not'; out.nextCall = ''; out.closedOn = date; }
+    return out;
+  }
+
+  // ---------- DELETE one entry / RESET one section (owner) ----------
+  // What else changes if this entry is deleted — in plain words. blocked = it may not be deleted alone.
+  function deleteImpact(state, r) {
+    var L = [], blocked = '', S = settingsOf(state), cu = byId(state.customers), us = userMap(state), fl = byId(state.flocks), items = byId(state.items);
+    var cr = function (p) { return cratesText(state, p); };
+    var nm = function (id) { return (us[id] || {}).name || 'the salesperson'; };
+    if (r.type === 'sales') {
+      var t = saleTotals(r), owe = t.totalCents - t.paidCents, c = cu[r.customerId] || {}, eg = { good: 0, cracked: 0 }, hens = 0, pm = productMap(state);
+      (r.items || []).forEach(function (l) { var e = lineEggs(state, l); eg.good += e.good; eg.cracked += e.cracked; if ((pm[l.productId] || {}).kind === 'hen') hens += int(l.qty); });
+      L.push('Receipt ' + (r.receiptNo || '') + ' (' + money(t.totalCents) + ') is removed from sales, profit and reports.');
+      if (owe > 0) L.push((c.name || 'The customer') + '’s debt goes DOWN by ' + money(owe) + '.');
+      if (t.paidCents) L.push('Money received goes down by ' + money(t.paidCents) + '.');
+      if (eg.good + eg.cracked) L.push(cr(eg.good) + (eg.cracked ? ' + ' + eg.cracked + ' cracked' : '') + ' go back to ' + (isCarrySale(state, r) ? nm(r.by) + '’s eggs' : 'the egg store') + '.');
+      if (hens) L.push(hens + ' spent hens count back as birds in their coop.');
+    } else if (r.type === 'payments') {
+      L.push(((cu[r.customerId] || {}).name || 'The customer') + '’s debt goes UP by ' + money(cents(r.amount)) + '.');
+    } else if (r.type === 'daily') {
+      var e = dailyEggs(state, r), f = fl[r.flockId] || {}, kg = feedKgOf(state, r, items);
+      L.push('Coop ' + (f.coop || r.coop) + ' loses this record of ' + date_(r.date) + ': ' + cr(e.total) + ' eggs come out of the egg store and the lay %.');
+      if (int(r.deaths) + int(r.culls)) L.push(int(r.deaths) + int(r.culls) + ' dead / culled birds count as alive again.');
+      if (kg) L.push(Math.round(kg * 10) / 10 + ' kg of feed goes back to the feed store, and its cost leaves the coop.');
+    } else if (r.type === 'stock') {
+      var g = 0, k = 0; (r.lines || []).forEach(function (l) { var x = lineEggs(state, l); g += x.good; k += x.cracked; });
+      if (r.kind === 'out') L.push(cr(g) + ' go back to the egg store; ' + nm(r.salesUserId) + ' has them no more.');
+      else if (r.kind === 'return') L.push(cr(g) + ' come out of the store and count as still with ' + nm(r.salesUserId) + '.');
+      else L.push('The egg store correction of ' + int(r.pieces) + ' ' + (r.eggKind || 'good') + ' eggs is undone.');
+    } else if (r.type === 'feed') {
+      var it = items[r.itemId || r.outputItemId] || {};
+      if (r.kind === 'buy') { L.push(Math.round(itemKg(state, it, r.qty, r.qtyUnit) * 10) / 10 + ' kg of ' + (it.name || 'feed') + ' leaves the feed store.'); L.push('Feed cost per kg is worked out again — coop feed costs may change.'); }
+      else if (r.kind === 'mix') { L.push('The mixed ' + (it.name || 'feed') + ' leaves the store and its ingredients go back.'); L.push('Coop feed costs may change.'); }
+      else L.push('The feed stock correction is undone.');
+    } else if (r.type === 'med') {
+      var mi = items[r.itemId] || {};
+      L.push(r.kind === 'use' ? num(r.qty) + ' ' + (mi.unit || '') + ' of ' + (mi.name || 'medicine') + ' go back to the store; the coop’s medicine cost goes down.' : num(r.qty) + ' ' + (mi.unit || '') + ' of ' + (mi.name || 'medicine') + ' leave the store.');
+    } else if (r.type === 'expenses') {
+      L.push('Expenses go down by ' + money(cents(r.amount)) + ' — profit goes up by the same.');
+    } else if (r.type === 'customers') {
+      var n = live(state.sales).filter(function (x) { return x.customerId === r.id; }).length + live(state.payments).filter(function (x) { return x.customerId === r.id; }).length;
+      if (n) blocked = (r.name || 'This customer') + ' has ' + n + ' sale(s) or payment(s). Delete those first — or keep the customer.';
+      else L.push((r.name || 'The customer') + ' is removed from the customer list.');
+    } else if (r.type === 'flocks') {
+      var d = live(state.daily).filter(function (x) { return x.flockId === r.id; }).length;
+      if (d) blocked = 'This flock has ' + d + ' daily record(s). Use “Close flock”, or Reset a section for the eggs first.';
+      else L.push('Coop ' + r.coop + ' flock is removed with its open tasks.');
+    } else if (r.type === 'tasks') {
+      L.push('The task and its alarms are removed.');
+    } else if (r.type === 'moves') {
+      var fa = fl[r.fromFlockId] || {}, fb = fl[r.toFlockId] || {};
+      L.push(int(r.birds) + ' birds go back from Coop ' + (fb.coop || r.toCoop) + ' to Coop ' + (fa.coop || r.fromCoop) + '.');
+    } else if (r.type === 'waiting') {
+      L.push((r.name || 'The person') + ' is taken off the waiting list; no more call reminders.');
+    }
+    L.push('You can bring it back from the Bin for 30 days.');
+    return { lines: L, blocked: blocked };
+  }
+  function date_(d) { var x = new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10))); return x.getUTCDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][x.getUTCMonth()]; }
+  var RESET_GROUPS = {
+    eggs: { label: 'Eggs & birds (daily records)', types: ['daily'] },
+    sales: { label: 'Sales & money — sales, debt payments, crates out / returns, egg store corrections (together)', types: ['sales', 'payments', 'stock'] },
+    feed: { label: 'Feed — bought and mixed', types: ['feed'] },
+    med: { label: 'Medicine — bought and used', types: ['med'] },
+    tasks: { label: 'Tasks & emergencies', types: ['tasks'] },
+    expenses: { label: 'Expenses', types: ['expenses'] },
+    waiting: { label: 'Waiting list', types: ['waiting'] }
+  };
+  function resetPlan(state, group, from, to) {
+    var g = RESET_GROUPS[group]; if (!g) return null;
+    var recs = [], count = {}, notes = [];
+    g.types.forEach(function (ty) {
+      live(state[ty]).forEach(function (r) { if (r.date >= from && r.date <= to) { recs.push(r); count[ty] = (count[ty] || 0) + 1; } });
+    });
+    if (group === 'feed' && live(state.daily).some(function (d) { return d.date >= from && d.date <= to && feedKgOf(state, d) > 0; }))
+      notes.push('Daily records keep their kg of feed. Their feed cost will use the price of the feed still in the store.');
+    if (group === 'sales') notes.push('Customers stay. Their debts are worked out again without these sales and payments.');
+    if (group === 'eggs') notes.push('The egg store and lay % are worked out again. Birds that died in these records count as alive again.');
+    return { group: group, label: g.label, types: g.types, from: from, to: to, records: recs, count: count, notes: notes };
   }
 
   // ---------- SUMMARY of everything for one day or a range of days ----------
@@ -748,24 +955,25 @@ var Calc = (function () {
     var timeOf = function (iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : pad(d.getHours()) + ':' + pad(d.getMinutes()); };
     var name = function (id) { var u = users[id]; return u ? u.name : (id || ''); };
     // eggs per coop, per collection
-    var coops = {}, T = { good: 0, cracked: 0, total: 0, deaths: 0, culls: 0, feedBags: 0, birdDays: 0, records: 0 };
+    var coops = {}, T = { good: 0, cracked: 0, total: 0, deaths: 0, culls: 0, feedKg: 0, birdDays: 0, records: 0, white: { good: 0, cracked: 0 }, brown: { good: 0, cracked: 0 } };
     sortChrono(live(state.daily).filter(function (d) { return inR(d.date); })).forEach(function (d) {
       var f = fl[d.flockId] || {}, c = int(f.coop || d.coop), e = dailyEggs(state, d);
-      var r = coops[c] || (coops[c] = { coop: c, flockId: d.flockId, collections: [], good: 0, cracked: 0, total: 0, deaths: 0, culls: 0, feedBags: 0, birdDays: 0, seen: {} });
-      r.collections.push({ id: d.id, date: d.date, time: timeOf(d.createdAt), good: e.good, cracked: e.cracked, total: e.total, by: name(d.by), notes: d.notes || '' });
-      r.good += e.good; r.cracked += e.cracked; r.total += e.total; r.deaths += int(d.deaths); r.culls += int(d.culls); r.feedBags += num(d.feedBags);
+      var r = coops[c] || (coops[c] = { coop: c, flockId: d.flockId, collections: [], good: 0, cracked: 0, total: 0, deaths: 0, culls: 0, feedKg: 0, birdDays: 0, seen: {}, white: { good: 0, cracked: 0 }, brown: { good: 0, cracked: 0 } });
+      r.collections.push({ id: d.id, date: d.date, time: timeOf(d.createdAt), good: e.good, cracked: e.cracked, total: e.total, white: e.white, brown: e.brown, by: name(d.by), notes: d.notes || '' });
+      ['white', 'brown'].forEach(function (k) { r[k].good += e[k].good; r[k].cracked += e[k].cracked; T[k].good += e[k].good; T[k].cracked += e[k].cracked; });
+      r.good += e.good; r.cracked += e.cracked; r.total += e.total; r.deaths += int(d.deaths); r.culls += int(d.culls); r.feedKg += feedKgOf(state, d, items);
       if (!r.seen[d.date] && fl[d.flockId]) { r.seen[d.date] = 1; r.birdDays += birdsAtStartOf(state, fl[d.flockId], d.date); }
     });
     var coopRows = Object.keys(coops).map(function (k) {
       var r = coops[k]; delete r.seen;
       r.layRate = r.birdDays ? Math.round(r.total / r.birdDays * 1000) / 10 : 0;
       r.birdsEnd = fl[r.flockId] ? birdsAlive(state, fl[r.flockId], to) : 0;
-      ['good', 'cracked', 'total', 'deaths', 'culls', 'feedBags', 'birdDays'].forEach(function (x) { T[x] += r[x]; });
+      ['good', 'cracked', 'total', 'deaths', 'culls', 'feedKg', 'birdDays'].forEach(function (x) { T[x] += r[x]; });
       T.records += r.collections.length;
-      r.feedBags = Math.round(r.feedBags * 100) / 100;
+      r.feedKg = kg1(r.feedKg); r.gramsPerBird = r.birdDays ? Math.round(r.feedKg / r.birdDays * 1000) : 0;
       return r;
     }).sort(function (a, b) { return a.coop - b.coop; });
-    T.feedBags = Math.round(T.feedBags * 100) / 100;
+    T.feedKg = kg1(T.feedKg); T.gramsPerBird = T.birdDays ? Math.round(T.feedKg / T.birdDays * 1000) : 0;
     T.layRate = T.birdDays ? Math.round(T.total / T.birdDays * 1000) / 10 : 0;
     var missing = activeFlocks(state, to).filter(function (f) { return from === to && !coops[int(f.coop)]; }).map(function (f) { return int(f.coop); });
     var birds = activeFlocks(state, to).reduce(function (a, f) { return a + birdsAlive(state, f, to); }, 0);
@@ -782,13 +990,13 @@ var Calc = (function () {
       (x.items || []).forEach(function (l) { var e = lineEggs(state, l); moves.soldGood += e.good; moves.soldCracked += e.cracked; });
     });
     // sales & money
-    var sales = { count: 0, totalCents: 0, paidCents: 0, debtAddedCents: 0, byMethod: { Cash: 0, MoMo: 0, Bank: 0 }, eggsGood: 0, eggsCracked: 0, hens: 0, bySeller: {}, list: [] };
+    var sales = { count: 0, totalCents: 0, paidCents: 0, debtAddedCents: 0, byMethod: { Cash: 0, MoMo: 0, Bank: 0 }, eggsGood: 0, eggsCracked: 0, eggsWhite: 0, eggsBrown: 0, hens: 0, bySeller: {}, list: [] };
     live(state.sales).forEach(function (x) {
       if (!inR(x.date)) return;
       var t = saleTotals(x); sales.count++; sales.totalCents += t.totalCents; sales.paidCents += t.paidCents;
       if (t.totalCents > t.paidCents) sales.debtAddedCents += t.totalCents - t.paidCents;
       (x.payments || []).forEach(function (p) { sales.byMethod[p.method] = (sales.byMethod[p.method] || 0) + cents(p.amount); });
-      (x.items || []).forEach(function (l) { var e = lineEggs(state, l); sales.eggsGood += e.good; sales.eggsCracked += e.cracked; var p = prods[l.productId]; if (p && p.kind === 'hen') sales.hens += int(l.qty); });
+      (x.items || []).forEach(function (l) { var e = lineEggs(state, l); sales.eggsGood += e.good; sales.eggsCracked += e.cracked; if (e.colour === 'white') sales.eggsWhite += e.good + e.cracked; else sales.eggsBrown += e.good + e.cracked; var p = prods[l.productId]; if (p && p.kind === 'hen') sales.hens += int(l.qty); });
       var s1 = sales.bySeller[x.by] || (sales.bySeller[x.by] = { name: name(x.by), count: 0, totalCents: 0, paidCents: 0 });
       s1.count++; s1.totalCents += t.totalCents; s1.paidCents += t.paidCents;
       var cu = byId(state.customers)[x.customerId] || {};
@@ -819,7 +1027,7 @@ var Calc = (function () {
       if (x.kind === 'buy') { feed.bought.push({ item: (items[x.itemId] || {}).name || x.itemId, qty: num(x.qty), unit: x.qtyUnit || '', costCents: cents(x.cost), by: name(x.by) }); feed.boughtCents += cents(x.cost); }
       else if (x.kind === 'mix') feed.mixed.push({ item: (items[x.outputItemId] || {}).name || '', kg: (x.lines || []).reduce(function (a, l) { return a + num(l.kg); }, 0), by: name(x.by) });
     });
-    live(state.daily).forEach(function (d) { if (inR(d.date) && num(d.feedBags) && d.feedItemId) { var n = (items[d.feedItemId] || {}).name || d.feedItemId; feed.used[n] = Math.round(((feed.used[n] || 0) + num(d.feedBags)) * 100) / 100; } });
+    live(state.daily).forEach(function (d) { var k = feedKgOf(state, d, items); if (inR(d.date) && k && d.feedItemId) { var n = (items[d.feedItemId] || {}).name || d.feedItemId; feed.used[n] = kg1((feed.used[n] || 0) + k); } });
     // medicine
     var med = { bought: [], used: [], boughtCents: 0 };
     live(state.med).forEach(function (x) {
@@ -841,9 +1049,38 @@ var Calc = (function () {
     // expenses
     var expenses = { totalCents: 0, list: [] };
     live(state.expenses).forEach(function (e) { if (inR(e.date)) { expenses.totalCents += cents(e.amount); expenses.list.push({ category: e.category || '', amountCents: cents(e.amount), coop: int(e.coop), note: e.note || '' }); } });
-    return { from: from, to: to, eggsPerCrate: S.eggsPerCrate, coops: coopRows, eggs: T, missing: missing, birds: birds, store: { open: open, close: close, moves: moves },
+    return { from: from, to: to, eggsPerCrate: S.eggsPerCrate, coops: coopRows, colours: coloursInUse(state), eggs: T, missing: missing, birds: birds, store: { open: open, close: close, moves: moves },
       sales: sales, debtPaid: debtPaid, received: received, crates: crateRows, adjusts: adjusts, feed: feed, med: med, tasks: tasks, expenses: expenses };
   }
+  // ---------- summary PER COOP for any range of days (History) ----------
+  function coopSummary(state, from, to) {
+    var sm = summary(state, from, to), items = byId(state.items), byCoop = {};
+    sm.coops.forEach(function (c) { byCoop[c.coop] = c; });
+    var flocks = live(state.flocks).filter(function (f) { return f.arrival <= to && !(f.status === 'closed' && f.closedOn && f.closedOn < from); })
+      .sort(function (a, b) { return int(a.coop) - int(b.coop); });
+    var rows = flocks.map(function (f) {
+      var c = int(f.coop), e = byCoop[c] || { good: 0, cracked: 0, total: 0, deaths: 0, culls: 0, feedKg: 0, layRate: 0, gramsPerBird: 0, collections: [], white: { good: 0, cracked: 0 }, brown: { good: 0, cracked: 0 } };
+      var med = {};
+      live(state.med).forEach(function (m) {
+        if (m.kind !== 'use' || m.date < from || m.date > to) return;
+        if (m.flockId ? m.flockId !== f.id : int(m.coop) !== c) return;
+        var it = items[m.itemId] || {}, k = it.name || m.itemId;
+        med[k] = med[k] || { item: k, qty: 0, unit: it.unit || '' }; med[k].qty = Math.round((med[k].qty + num(m.qty)) * 100) / 100;
+      });
+      var done = 0, overdue = 0;
+      live(state.tasks).forEach(function (x) {
+        if (x.kind === 'Emergency' || (x.coops || []).map(int).indexOf(c) < 0) return;
+        if (x.status !== 'open' && x.doneAt && x.doneAt >= from && x.doneAt <= to && x.doneNote !== 'Before the app was used') done++;
+        if (x.status === 'open' && x.date < to) overdue++;
+      });
+      var age = flockAge(state, f, to > f.arrival ? to : f.arrival);
+      return { coop: c, flockId: f.id, breed: f.breed || '', colours: flockColours(state, f, to), white: e.white, brown: e.brown, stage: age.stage, week: age.week, birdsStart: birdsAtStartOf(state, f, from > f.arrival ? from : f.arrival),
+        birdsEnd: birdsAlive(state, f, to), good: e.good, cracked: e.cracked, eggs: e.total, layRate: e.layRate, deaths: e.deaths, culls: e.culls,
+        feedKg: e.feedKg, gramsPerBird: e.gramsPerBird, records: e.collections.length, med: Object.keys(med).map(function (k) { return med[k]; }), tasksDone: done, overdue: overdue };
+    });
+    return { from: from, to: to, rows: rows, total: sm.eggs, colours: sm.colours };
+  }
+
   // Plain text for WhatsApp / email. money=false hides all GH₵ figures.
   function summaryText(state, sm, farm, money) {
     var L = [], cr = function (p) { return cratesText(state, p); };
@@ -851,13 +1088,15 @@ var Calc = (function () {
     L.push('*' + (farm || 'The Egg Man Farms') + '*');
     L.push('*' + (sm.from === sm.to ? 'Daily summary · ' + dt(sm.from) : 'Summary · ' + dt(sm.from) + ' – ' + dt(sm.to)) + '*');
     L.push('');
+    var two = (sm.colours || []).length > 1;
     L.push('🥚 *Eggs:* ' + cr(sm.eggs.total) + ' (' + sm.eggs.cracked + ' cracked) · lay ' + sm.eggs.layRate + '%');
+    if (two) L.push('  White ' + cr(sm.eggs.white.good + sm.eggs.white.cracked) + ' · Brown ' + cr(sm.eggs.brown.good + sm.eggs.brown.cracked));
     sm.coops.forEach(function (c) {
       L.push('  Coop ' + c.coop + ': ' + cr(c.total) + (c.collections.length > 1 ? ' in ' + c.collections.length + ' collections' : '') + ' · ' + c.layRate + '%' + (c.deaths + c.culls ? ' · ' + (c.deaths + c.culls) + ' died/culled' : ''));
     });
     if (sm.missing.length) L.push('  ⚠ No record: Coop ' + sm.missing.join(', '));
     L.push('🐔 *Birds:* ' + sm.birds.toLocaleString() + ' alive · ' + (sm.eggs.deaths + sm.eggs.culls) + ' died/culled');
-    L.push('🌾 *Feed used:* ' + (Object.keys(sm.feed.used).map(function (k) { return sm.feed.used[k] + ' bags ' + k; }).join(', ') || 'none recorded'));
+    L.push('🌾 *Feed used:* ' + (Object.keys(sm.feed.used).map(function (k) { return sm.feed.used[k] + ' kg ' + k; }).join(', ') || 'none recorded'));
     if (sm.feed.bought.length) L.push('  Bought: ' + sm.feed.bought.map(function (b) { return b.qty + ' ' + b.unit + ' ' + b.item + (money ? ' (' + money_(b.costCents) + ')' : ''); }).join(', '));
     if (sm.feed.mixed.length) L.push('  Mixed: ' + sm.feed.mixed.map(function (b) { return b.kg + ' kg ' + b.item; }).join(', '));
     if (sm.med.used.length) L.push('💉 *Medicine used:* ' + sm.med.used.map(function (m) { return m.qty + ' ' + m.unit + ' ' + m.item + (m.coop ? ' (Coop ' + m.coop + ')' : ''); }).join(', '));
@@ -866,7 +1105,7 @@ var Calc = (function () {
     if (sm.tasks.overdue.length) L.push('⏰ *Overdue:* ' + sm.tasks.overdue.slice(0, 8).map(function (t) { return t.title + ' · ' + t.where; }).join('; '));
     if (sm.tasks.due.length) L.push('📅 *Coming up:* ' + sm.tasks.due.slice(0, 6).map(function (t) { return t.title + ' · ' + t.where + ' · ' + t.date.slice(8) + '/' + t.date.slice(5, 7); }).join('; '));
     sm.crates.forEach(function (c) { L.push('🧺 ' + c.name + ': took ' + cr(c.outGood) + ', returned ' + cr(c.backGood) + (c.broken ? ', broken ' + c.broken : '') + (c.returnRecorded && !c.balanced ? ' ⚠ not balanced' : '')); });
-    L.push('🏠 *Egg store:* ' + cr(sm.store.close.good) + ' good, ' + sm.store.close.cracked + ' cracked');
+    L.push('🏠 *Egg store:* ' + cr(sm.store.close.good) + ' good, ' + sm.store.close.cracked + ' cracked' + (two ? ' (white ' + cr(sm.store.close.white.good) + ' · brown ' + cr(sm.store.close.brown.good) + ' good)' : ''));
     if (money) {
       L.push('');
       L.push('💰 *Sales:* ' + money_(sm.sales.totalCents) + ' (' + sm.sales.count + ' sales, ' + cr(sm.sales.eggsGood) + ')');
@@ -900,14 +1139,15 @@ var Calc = (function () {
     var flocks = live(state.flocks).filter(function (f) {
       return f.arrival <= end && !(f.status === 'closed' && f.closedOn && f.closedOn < start);
     }).sort(function (a, b) { return int(a.coop) - int(b.coop); });
-    var farm = { startBirds: 0, endBirds: 0, deaths: 0, culls: 0, hensSold: 0, eggs: 0, good: 0, cracked: 0, birdDays: 0, feedBags: 0, feedKg: 0, arrived: 0 };
+    var farm = { startBirds: 0, endBirds: 0, deaths: 0, culls: 0, hensSold: 0, eggs: 0, good: 0, cracked: 0, birdDays: 0, feedBags: 0, feedKg: 0, arrived: 0, white: 0, brown: 0 };
     var coopRows = flocks.map(function (f) {
       var r = { coop: int(f.coop), flockId: f.id, breed: f.breed || '', eggs: 0, good: 0, cracked: 0, deaths: 0, culls: 0, hensSold: 0, feedBags: 0, feedKg: 0, birdDays: 0, days: 0, seen: {} };
       live(state.daily).forEach(function (d) {
         if (d.flockId !== f.id || !inM(d.date)) return;
         var e = dailyEggs(state, d);
         r.eggs += e.total; r.good += e.good; r.cracked += e.cracked; r.deaths += int(d.deaths); r.culls += int(d.culls);
-        r.feedBags += num(d.feedBags); r.feedKg += d.feedItemId ? itemKg(state, im[d.feedItemId], d.feedBags, 'bag') : 0;
+        farm.white += e.white.good + e.white.cracked; farm.brown += e.brown.good + e.brown.cracked;
+        r.feedKg += feedKgOf(state, d, im); r.feedBags = r.feedKg / s.kgPerBag;
         if (!r.seen[d.date]) { r.seen[d.date] = 1; r.birdDays += birdsAtStartOf(state, f, d.date); r.days++; }
       });
       live(state.sales).forEach(function (sale) {
@@ -988,9 +1228,9 @@ var Calc = (function () {
       }
     });
     live(state.daily).forEach(function (d) {
-      if (!inM(d.date) || !d.feedItemId || !(num(d.feedBags) > 0)) return;
+      if (!inM(d.date) || !d.feedItemId || !(feedKgOf(state, d, im) > 0)) return;
       var u = feedUsed[d.feedItemId] || (feedUsed[d.feedItemId] = { name: (im[d.feedItemId] || {}).name || d.feedItemId, kg: 0 });
-      u.kg += itemKg(state, im[d.feedItemId], d.feedBags, 'bag');
+      u.kg += feedKgOf(state, d, im);
     });
     var feedStock = live(state.items).filter(function (i) { return (i.category === 'feed' || i.category === 'ingredient') && fsAll.items[i.id] && fsAll.items[i.id].tracked; })
       .map(function (i) { var x = fsAll.items[i.id]; return { name: i.name, shown: x.shown, unit: x.unit, low: x.low }; });
@@ -1064,16 +1304,16 @@ var Calc = (function () {
     h.push('<div style="font-family:Arial,Helvetica,sans-serif;color:#1A2A1E;max-width:900px;margin:0 auto">');
     h.push('<div style="border-bottom:4px solid #F2B705;padding-bottom:8px;margin-bottom:12px"><div style="font-size:22px;font-weight:800;color:#1F4D2C">' + htmlEsc(farmName || 'The Egg Man Farms') + '</div>' +
       '<div style="font-size:16px;font-weight:700">Monthly farm report · ' + title + '</div><div style="font-size:11px;color:#56655A">' + R.start + ' to ' + R.end + (R.partial ? ' (month not finished yet)' : '') + ' · made ' + (today || R.end) + '</div></div>');
-    h.push('<table style="width:100%;border-collapse:separate;border-spacing:6px"><tr>' + box('Eggs collected', cr(F.eggs), n(F.eggs) + ' eggs · ' + F.layRate + '% lay') + box('Sales', money(R.sales.cents), R.sales.count + ' sales') +
+    h.push('<table style="width:100%;border-collapse:separate;border-spacing:6px"><tr>' + box('Eggs collected', cr(F.eggs), (coloursInUse(state).length > 1 ? 'white ' + cr(F.white) + ' · brown ' + cr(F.brown) : n(F.eggs) + ' eggs') + ' · ' + F.layRate + '% lay') + box('Sales', money(R.sales.cents), R.sales.count + ' sales') +
       box('Money received', money(R.sales.receivedCents), 'incl. ' + money(R.sales.debtPaidCents) + ' old debts') + box('Profit', money(P.profitCents), 'income ' + money(P.incomeCents)) + '</tr><tr>' +
       box('Birds at end', n(F.endBirds), 'started ' + n(F.startBirds) + (F.arrived ? ' + ' + n(F.arrived) + ' chicks' : '')) + box('Deaths & culls', n(F.deaths + F.culls), F.mortality + '% of birds') +
-      box('Feed eaten', n(F.feedKg) + ' kg', n(F.feedBags) + ' bags') + box('Customers owe', money(R.debt.endCents), 'was ' + money(R.debt.startCents) + ' at start') + '</tr></table>');
+      box('Feed eaten', n(F.feedKg) + ' kg', (F.endBirds ? Math.round(F.feedKg / Math.max(1, F.birdDays) * 1000) + ' g per bird a day' : '')) + box('Customers owe', money(R.debt.endCents), 'was ' + money(R.debt.startCents) + ' at start') + '</tr></table>');
     if (R.bestCoop) h.push('<p style="font-size:12px;margin:6px 0">Best laying coop: <b>Coop ' + R.bestCoop.coop + '</b> (' + R.bestCoop.layRate + '%)' + (R.worstCoop ? ' · lowest: <b>Coop ' + R.worstCoop.coop + '</b> (' + R.worstCoop.layRate + '%)' : '') + '.</p>');
 
     h.push(sec('1. Coops — birds and eggs'));
     h.push(table(['Coop', 'Stage', 'Start', 'Chicks in', 'Died', 'Culled', 'Hens sold', 'End', 'Good eggs', 'Cracked', 'Lay %', 'Days', 'Feed'],
-      R.coops.map(function (r) { return ['<b>' + r.coop + '</b>', htmlEsc(r.stage) + '<br>wk ' + r.week, n(r.startBirds), r.arrived ? n(r.arrived) : '', n(r.deaths), n(r.culls), n(r.hensSold), n(r.endBirds), cr(r.good), n(r.cracked), r.layRate + '%', r.days, n(r.feedBags) + ' bg']; }),
-      ['Farm', '', n(F.startBirds), F.arrived ? n(F.arrived) : '', n(F.deaths), n(F.culls), n(F.hensSold), n(F.endBirds), cr(F.good), n(F.cracked), F.layRate + '%', '', n(F.feedBags) + ' bg']));
+      R.coops.map(function (r) { return ['<b>' + r.coop + '</b>', htmlEsc(r.stage) + '<br>wk ' + r.week, n(r.startBirds), r.arrived ? n(r.arrived) : '', n(r.deaths), n(r.culls), n(r.hensSold), n(r.endBirds), cr(r.good), n(r.cracked), r.layRate + '%', r.days, n(r.feedKg) + ' kg']; }),
+      ['Farm', '', n(F.startBirds), F.arrived ? n(F.arrived) : '', n(F.deaths), n(F.culls), n(F.hensSold), n(F.endBirds), cr(F.good), n(F.cracked), F.layRate + '%', '', n(F.feedKg) + ' kg']));
 
     h.push(sec('2. Profit per coop'));
     h.push(table(['Coop', 'Income', 'Feed', 'Medicine', 'Other costs', 'Total costs', 'Profit'],
@@ -1125,12 +1365,15 @@ var Calc = (function () {
     dailyEggs: dailyEggs, layRate: layRate, toCrates: toCrates, cratesText: cratesText, lineEggs: lineEggs, isCarrySale: isCarrySale,
     eggStore: eggStore, carry: carry, saleTotals: saleTotals, customerLedger: customerLedger, customerBalance: customerBalance,
     priceFor: priceFor, validateSale: validateSale, validateDaily: validateDaily, itemKg: itemKg, feedState: feedState,
+    feedKgOf: feedKgOf, recipeParts: recipeParts, recipeBatch: recipeBatch, isOwnMix: isOwnMix,
     mixPreview: mixPreview, medState: medState, profit: profit, flockLifetime: flockLifetime,
     generateFlockTasks: generateFlockTasks, nextDate: nextDate, taskStatus: taskStatus, dashboard: dashboard,
     lastDayOfMonth: lastDayOfMonth, balanceAt: balanceAt, monthlyReport: monthlyReport, reportHtml: reportHtml, money: money,
     oldestUnpaidDate: oldestUnpaidDate, debtSummary: debtSummary, periodSummary: periodSummary, yearSummary: yearSummary,
     dayRecords: dayRecords, dayTotal: dayTotal, weekStart: weekStart,
-    alarmSettings: alarmSettings, alarmsFor: alarmsFor, parseTimes: parseTimes, shiftBack: shiftBack, summary: summary, summaryText: summaryText
+    deleteImpact: deleteImpact, resetPlan: resetPlan, RESET_GROUPS: RESET_GROUPS,
+    alarmSettings: alarmSettings, alarmsFor: alarmsFor, coopSummary: coopSummary,
+    defaultColour: defaultColour, flockColour: flockColour, lineColour: lineColour, flockColours: flockColours, coloursInUse: coloursInUse, waitingList: waitingList, waitAfterCall: waitAfterCall, waitWants: waitWants, parseTimes: parseTimes, shiftBack: shiftBack, summary: summary, summaryText: summaryText
   };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = Calc;
