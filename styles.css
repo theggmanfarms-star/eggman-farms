@@ -166,3 +166,7 @@ details.info p{margin:4px 0 0;background:#F3F7EE;border-radius:10px;padding:10px
 /* egg colour chips */
 .chip.egg-w{background:#F4F1EA;color:#5c5a52;border:1px solid #D9D3C3}
 .chip.egg-b{background:#E9D3B8;color:#6B4423}
+
+/* give-out / return: running total stays in view while typing */
+.lines-live{position:sticky;top:8px;z-index:5;margin:0 0 6px}
+.lines-live.alert:not(.ok):not(.warn){background:#F5F2EA}

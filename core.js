@@ -178,7 +178,8 @@
     if (!navigator.onLine) { emit(); return; }
     Store.syncing = true; emit();
     var again = false;
-    var sent = pending();
+    var BATCH = 100; // send at most 100 records per trip, so a phone that was offline for days still catches up
+    var waiting = pending(), sent = waiting.slice(0, BATCH);
     var sentAt = {}; sent.forEach(function (r) { sentAt[r.id] = r.updatedAt; });
     try {
       var res = await api({ action: 'sync', userId: Store.session.user.id, token: Store.session.token, since: Store.meta.since,
@@ -217,7 +218,7 @@
       Store.meta.lastSync = Date.now(); Store.meta.lastError = '';
       await putRecords(changed); await deleteRecords(removed);
       await kvSet('meta', Store.meta);
-      again = removed.length > 0;
+      again = removed.length > 0 || waiting.length > BATCH;
     } catch (e) {
       Store.meta.lastError = (e && e.name === 'AbortError') ? 'Sync took too long — will try again.' : 'Could not reach Google — will try again.';
     } finally {

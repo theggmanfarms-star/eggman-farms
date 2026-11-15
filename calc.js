@@ -654,7 +654,53 @@ var Calc = (function () {
     });
     return out;
   }
+  // Repeat codes: once, daily, weekly, 2weeks, monthly, and any "every N": d:N (days), w:N (weeks), m:N (months)
+  function repeatCode(every, unit) {
+    var n = Math.max(1, int(every) || 1);
+    if (unit === 'weeks') return n === 1 ? 'weekly' : n === 2 ? '2weeks' : 'w:' + n;
+    if (unit === 'months') return n === 1 ? 'monthly' : 'm:' + n;
+    return n === 1 ? 'daily' : 'd:' + n;
+  }
+  function repeatParts(repeat) {
+    if (repeat === 'daily') return { n: 1, unit: 'days' };
+    if (repeat === 'weekly') return { n: 1, unit: 'weeks' };
+    if (repeat === '2weeks') return { n: 2, unit: 'weeks' };
+    if (repeat === 'monthly') return { n: 1, unit: 'months' };
+    var m = /^([dwm]):(\d+)$/.exec(String(repeat || ''));
+    if (m) return { n: Math.max(1, int(m[2])), unit: m[1] === 'd' ? 'days' : m[1] === 'w' ? 'weeks' : 'months' };
+    return null;
+  }
+  function repeatText(repeat) {
+    var r = repeatParts(repeat);
+    if (!r) return 'Once';
+    var one = { days: 'day', weeks: 'week', months: 'month' }[r.unit];
+    return r.n === 1 ? 'Every ' + one : 'Every ' + r.n + ' ' + r.unit;
+  }
+  // the i-th date of a repeat, counted from the start (so monthly from the 31st stays on the last day, it never drifts)
+  function repeatDate(start, repeat, i) {
+    var r = repeatParts(repeat);
+    if (!r) return i === 0 ? start : null;
+    if (r.unit === 'days') return addDays(start, i * r.n);
+    if (r.unit === 'weeks') return addDays(start, i * 7 * r.n);
+    return addMonths(start, i * r.n);
+  }
+  /** All dates of a series. end = { times: N } or { until: 'YYYY-MM-DD' }. Never more than max (120). */
+  function seriesDates(start, repeat, end, max) {
+    max = max || 120;
+    var out = [], times = end && int(end.times), until = end && end.until;
+    if (!start || (!times && !until)) return out;
+    for (var i = 0; i < max + 1; i++) {
+      var d = repeatDate(start, repeat, i);
+      if (!d) break;
+      if (until && d > until) break;
+      if (times && out.length >= times) break;
+      out.push(d);
+    }
+    return out;
+  }
   function nextDate(date, repeat) {
+    var r = repeatParts(repeat);
+    if (r && /^[dwm]:/.test(repeat)) return r.unit === 'days' ? addDays(date, r.n) : r.unit === 'weeks' ? addDays(date, 7 * r.n) : addMonths(date, r.n);
     if (repeat === 'daily') return addDays(date, 1);
     if (repeat === 'weekly') return addDays(date, 7);
     if (repeat === '2weeks') return addDays(date, 14);
@@ -1371,6 +1417,7 @@ var Calc = (function () {
     lastDayOfMonth: lastDayOfMonth, balanceAt: balanceAt, monthlyReport: monthlyReport, reportHtml: reportHtml, money: money,
     oldestUnpaidDate: oldestUnpaidDate, debtSummary: debtSummary, periodSummary: periodSummary, yearSummary: yearSummary,
     dayRecords: dayRecords, dayTotal: dayTotal, weekStart: weekStart,
+    repeatCode: repeatCode, repeatParts: repeatParts, repeatText: repeatText, repeatDate: repeatDate, seriesDates: seriesDates,
     deleteImpact: deleteImpact, resetPlan: resetPlan, RESET_GROUPS: RESET_GROUPS,
     alarmSettings: alarmSettings, alarmsFor: alarmsFor, coopSummary: coopSummary,
     defaultColour: defaultColour, flockColour: flockColour, lineColour: lineColour, flockColours: flockColours, coloursInUse: coloursInUse, waitingList: waitingList, waitAfterCall: waitAfterCall, waitWants: waitWants, parseTimes: parseTimes, shiftBack: shiftBack, summary: summary, summaryText: summaryText

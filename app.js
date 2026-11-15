@@ -754,7 +754,7 @@
     var t = today(), k = C.taskStatus(x, t);
     var out = back('tasks', 'Tasks') + head(x.title, chipFor(x.kind) + ' ' + esc(whereText(x)) + ' · ' + dLong(x.date));
     out += '<div class="card">' + kv('Status', esc(k === 'done' ? 'Done' : k === 'emergency' ? 'Open emergency' : k[0].toUpperCase() + k.slice(1)), k === 'overdue' || k === 'emergency' ? 'red' : '') +
-      (x.assignee ? kv('Assigned to', esc(userName(x.assignee))) : '') + (x.repeat && x.repeat !== 'once' ? kv('Repeats', esc(REPEAT[x.repeat])) : '') +
+      (x.assignee ? kv('Assigned to', esc(userName(x.assignee))) : '') + (x.repeat && x.repeat !== 'once' ? kv('Repeats', esc(C.repeatText(x.repeat))) : '') + (x.seriesId ? kv('Series', esc(x.seriesRule || '') + ' · task ' + x.seriesNo + ' of ' + x.seriesOf) : '') +
       (x.kind !== 'Emergency' ? kv('Alarm', esc(x.time || pad(C.alarmSettings(st()).hour) + ':00') + alarmBeforeText()) : '') +
       kv('Added by', esc(userName(x.by) || 'Schedule')) + (x.notes ? kv('Notes', esc(x.notes)) : '') +
       (x.status !== 'open' ? kv('Done', esc(dShort(x.doneAt)) + ' by ' + esc(userName(x.doneBy))) + (x.doneNote ? kv('Note', esc(x.doneNote)) : '') : '') + '</div>';
@@ -777,6 +777,7 @@
     }
     if (x.status === 'open' && x.kind !== 'Emergency' && isRole('owner', 'manager'))
       out += '<form class="card row" data-form="tasktime" data-id="' + esc(x.id) + '" style="margin-top:12px;gap:8px;align-items:flex-end"><label class="grow">⏰ Change alarm time<input type="time" name="time" value="' + esc(x.time || pad(C.alarmSettings(st()).hour) + ':00') + '"></label><button class="btn light" type="submit">Save time</button></form>';
+    if (isRole('owner') && x.seriesId && x.status === 'open') out += '<button class="btn light block" style="margin-top:12px" type="button" data-act="stopSeries" data-id="' + esc(x.id) + '">Stop the rest of this series (from ' + dShort(x.date) + ')</button>';
     if (isRole('owner')) out += '<button class="btn light block" style="margin-top:12px" type="button" data-act="deleteTask" data-id="' + esc(x.id) + '">Delete this task</button>';
     return out;
   };
@@ -812,7 +813,16 @@
   ACT.deleteTask = function (b) {
     var x = byId(st().tasks, b.dataset.id);
     preview({ title: 'Delete task', rows: [['Task', esc(x.title)], ['Date', dLong(x.date)]], confirm: 'Delete', warnings: ['This removes the task and its calendar alarm.'],
-      onConfirm: async function () { await E.save(Object.assign({}, x, { deleted: true })); return 'tasks'; } });
+      onConfirm: async function () { await E.save(Object.assign({}, x, { deleted: true, deletedAt: Date.now(), deletedBy: me().id })); return 'tasks'; } });
+  };
+  // a series made ahead (e.g. vitamins every day for 5 days): stop this one and all later open ones
+  ACT.stopSeries = function (b) {
+    var x = byId(st().tasks, b.dataset.id);
+    var rest = live(st().tasks).filter(function (t) { return t.seriesId === x.seriesId && t.status === 'open' && t.date >= x.date; }).sort(function (a, c) { return a.date < c.date ? -1 : 1; });
+    preview({ title: 'Stop the rest of this series', confirm: 'Stop ' + rest.length + ' task' + (rest.length === 1 ? '' : 's'), doneMessage: 'Stopped ✓ — the tasks are in the Bin for 30 days',
+      warnings: ['Tasks already done stay in the records. You can bring the stopped ones back from Settings › Bin.'],
+      rows: [['Task', esc(x.title)], ['Series', esc(x.seriesRule || '')], ['Will be stopped', rest.length + ' task' + (rest.length === 1 ? '' : 's') + ': ' + datesChips(rest.map(function (t) { return t.date; }), 20)]],
+      onConfirm: async function () { var now = Date.now(); await E.save(rest.map(function (t) { return Object.assign({}, t, { deleted: true, deletedAt: now, deletedBy: me().id }); })); return 'tasks'; } });
   };
   var REPEAT = { once: 'Once', daily: 'Every day', weekly: 'Every week', '2weeks': 'Every 2 weeks', monthly: 'Every month' };
   routes['task-new'] = function (mode, coop) {
@@ -832,16 +842,68 @@
       '<form class="card" data-form="task"><label>Type of task<select name="kind">' + KINDS.map(function (k) { return opt(k, k, 'Disinfection'); }).join('') + '</select></label>' +
       '<label>What to do<input name="title" required placeholder="e.g. Clear nets and cobwebs"></label>' +
       '<div><div class="small bold" style="margin-bottom:6px">Which coop(s)?</div>' + checks + '</div>' +
-      '<div class="grid g2"><label>Date<input type="date" name="date" value="' + t + '" required></label><label>Alarm time<input type="time" name="time" value="' + pad(C.alarmSettings(s).hour) + ':00"></label></div>' +
-      '<label>Repeat<select name="repeat">' + Object.keys(REPEAT).map(function (k) { return opt(k, REPEAT[k], 'once'); }).join('') + '</select></label>' +
+      '<div class="grid g2"><label>Start date<input type="date" name="date" value="' + t + '" required></label><label>Alarm time<input type="time" name="time" value="' + pad(C.alarmSettings(s).hour) + ':00"></label></div>' +
+      '<label>How often?<select name="how">' + opt('once', 'Once', 'once') + opt('repeat', 'Repeat every … days / weeks / months', 'once') + opt('dates', 'Pick my own dates', 'once') + '</select></label>' +
+      '<div class="grid g2" data-show="repeat" hidden><label>Every<input name="everyN" type="number" step="1" inputmode="numeric" value="1"></label>' +
+        '<label>&nbsp;<select name="unit">' + opt('days', 'day(s)', 'days') + opt('weeks', 'week(s)', 'days') + opt('months', 'month(s)', 'days') + '</select></label></div>' +
+      '<div data-show="repeat" hidden><label>Ends<select name="endMode">' + opt('times', 'After a number of times', 'times') + opt('until', 'On a date', 'times') + opt('never', 'Never (next one appears when this is done)', 'times') + '</select></label>' +
+        '<label data-show="times">How many times? <span class="tiny muted">(every day for 5 days = 5)</span><input name="endTimes" type="number" step="1" inputmode="numeric" value="5"></label>' +
+        '<label data-show="until" hidden>Last date<input type="date" name="endDate"></label></div>' +
+      '<div data-show="dates" hidden><div class="row" style="gap:8px;align-items:flex-end"><label class="grow">Add a date<input type="date" name="pickDate"></label><button class="btn light" type="button" data-act="addTaskDate">+ Add date</button></div>' +
+        '<input type="hidden" name="dates" value=""><div class="pills" id="pickedDates" style="margin-top:6px"></div></div>' +
+      '<div class="alert ok small" id="taskDates" aria-live="polite">One task on the start date.</div>' +
       '<label>Assign to<select name="assignee"><option value="">— anyone —</option>' + people.map(function (u) { return opt(u.id, u.name + ' (' + u.role + ')'); }).join('') + '</select></label>' +
       '<label>Notes<textarea name="notes"></textarea></label><button class="btn" type="submit">Next: preview →</button></form>';
   };
+  // which dates the task form will create
+  function taskPlan(f) {
+    var how = val(f, 'how') || 'once', start = val(f, 'date');
+    if (how === 'dates') {
+      var ds = val(f, 'dates').split(',').filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); }).sort();
+      return { how: how, dates: ds.filter(function (d, i) { return ds.indexOf(d) === i; }), repeat: 'once', text: 'On dates I picked' };
+    }
+    if (how !== 'repeat') return { how: 'once', dates: start ? [start] : [], repeat: 'once', text: 'Once' };
+    var code = C.repeatCode(val(f, 'everyN'), val(f, 'unit')), mode = val(f, 'endMode');
+    if (mode === 'never') return { how: how, dates: start ? [start] : [], repeat: code, text: C.repeatText(code) + ', no end', never: true };
+    var end = mode === 'until' ? { until: val(f, 'endDate') } : { times: C.int(val(f, 'endTimes')) };
+    return { how: how, dates: C.seriesDates(start, code, end, 120), repeat: code, mode: mode,
+      text: C.repeatText(code) + (mode === 'until' ? ' until ' + (end.until ? dShort(end.until) + ' ' + end.until.slice(0, 4) : '…') : ', ' + (end.times || 0) + ' time' + (end.times === 1 ? '' : 's')) };
+  }
+  function datesChips(ds, max) {
+    max = max || 14;
+    return ds.slice(0, max).map(function (d) { return '<span class="pill" style="min-height:0;padding:4px 10px">' + dShort(d) + (d.slice(0, 4) !== today().slice(0, 4) ? ' ' + d.slice(0, 4) : '') + '</span>'; }).join(' ') + (ds.length > max ? ' <span class="small muted">… ' + ds.length + ' in all</span>' : '');
+  }
+  LIVE.task = function (f) {
+    if (f.dataset.emergency === '1') return;
+    var how = val(f, 'how') || 'once', mode = val(f, 'endMode');
+    f.querySelectorAll('[data-show]').forEach(function (el) {
+      var k = el.dataset.show;
+      el.hidden = k === 'repeat' ? how !== 'repeat' : k === 'dates' ? how !== 'dates' : k === 'times' ? mode !== 'times' : k === 'until' ? mode !== 'until' : false;
+    });
+    var p = taskPlan(f), box = document.getElementById('taskDates'); if (!box) return;
+    var chips = document.getElementById('pickedDates');
+    if (chips) chips.innerHTML = val(f, 'dates').split(',').filter(Boolean).sort().map(function (d) { return '<span class="pill" style="min-height:0;padding:4px 10px">' + dShort(d) + ' <button type="button" data-act="removeTaskDate" data-d="' + d + '" aria-label="Remove ' + d + '" style="border:0;background:none;font-weight:800;cursor:pointer">✕</button></span>'; }).join(' ');
+    if (p.never) { box.className = 'alert ok small'; box.innerHTML = '<b>' + esc(p.text) + '.</b> One task on ' + (p.dates[0] ? dShort(p.dates[0]) : 'the start date') + '; when it is ticked done, the next one appears ' + esc(C.repeatText(p.repeat).toLowerCase()) + ' later.'; return; }
+    if (p.dates.length > 120) { box.className = 'alert err small'; box.innerHTML = '<b>Too many: more than 120 tasks.</b> Choose fewer times or an earlier last date, or choose “Never” to make one at a time.'; return; }
+    box.className = 'alert ' + (p.dates.length ? 'ok' : 'warn') + ' small';
+    box.innerHTML = p.dates.length ? '<b>This makes ' + p.dates.length + ' task' + (p.dates.length === 1 ? '' : 's') + ':</b><div style="margin-top:6px">' + datesChips(p.dates) + '</div>' + (p.dates.length > 1 ? '<div style="margin-top:6px">Each one has its own alarm and is ticked on its own day.</div>' : '') : 'No dates yet.';
+  };
+  ACT.addTaskDate = function (b) {
+    var f = b.closest('form'), d = val(f, 'pickDate');
+    if (!d) return toast('Choose a date first');
+    var l = val(f, 'dates').split(',').filter(Boolean); if (l.indexOf(d) < 0) l.push(d);
+    f.elements.dates.value = l.sort().join(','); f.elements.pickDate.value = ''; LIVE.task(f);
+  };
+  ACT.removeTaskDate = function (b) {
+    var f = b.closest('form'); f.elements.dates.value = val(f, 'dates').split(',').filter(function (x) { return x && x !== b.dataset.d; }).join(','); LIVE.task(f);
+  };
   FORMS.task = function (f) {
     var emergency = f.dataset.emergency === '1', t = today();
+    var plan = emergency ? null : taskPlan(f);
     var sel = val(f, 'all') ? [] : coops().filter(function (c) { return val(f, 'c' + c); });
     var rec = { type: 'tasks', kind: emergency ? 'Emergency' : val(f, 'kind'), title: val(f, 'title').trim(), coops: sel, date: emergency ? t : val(f, 'date'),
-      repeat: emergency ? 'once' : val(f, 'repeat'), assignee: emergency ? '' : val(f, 'assignee'), notes: val(f, 'notes').trim(), status: 'open' };
+      repeat: emergency ? 'once' : plan.repeat, assignee: emergency ? '' : val(f, 'assignee'), notes: val(f, 'notes').trim(), status: 'open' };
+    if (!emergency && plan.dates.length) rec.date = plan.dates[0];
     if (!emergency && /^\d{2}:\d{2}$/.test(val(f, 'time'))) rec.time = val(f, 'time');
     if (sel.length === 1) { var fl = C.flockInCoop(st(), sel[0], rec.date); if (fl) rec.flockId = fl.id; }
     var errors = [], warnings = [];
@@ -849,9 +911,24 @@
     if (!emergency && !rec.date) errors.push('Choose a date.');
     if (!emergency && rec.date < t) warnings.push('This date has already passed.');
     if (!val(f, 'all') && !sel.length) errors.push('Tick "Whole farm" or at least one coop.');
-    preview({ title: emergency ? 'Emergency report' : 'New task', gold: false, errors: errors, warnings: warnings, confirm: emergency ? 'Send emergency' : 'Confirm & save',
-      rows: [['Type', esc(rec.kind)], ['What', esc(rec.title)], ['Where', esc(whereText(rec))]].concat(emergency ? [] : [['Date', dLong(rec.date)], ['Alarm', esc(rec.time || pad(C.alarmSettings(st()).hour) + ':00') + alarmBeforeText()], ['Repeat', esc(REPEAT[rec.repeat])], ['Assigned to', esc(userName(rec.assignee) || 'Anyone')]]).concat(rec.notes ? [['Notes', esc(rec.notes)]] : []),
-      onConfirm: async function () { var r = (await E.save(rec))[0]; return 'task/' + r.id; } });
+    var many = !emergency && !plan.never && plan.dates.length > 1;
+    if (!emergency) {
+      if (!plan.dates.length) errors.push(plan.how === 'dates' ? 'Add at least one date.' : plan.mode === 'until' ? 'Choose the last date (on or after the start date).' : 'Choose a start date.');
+      if (plan.dates.length > 120) errors.push('More than 120 tasks. Choose fewer times or an earlier last date, or choose “Never”.');
+      if (plan.how === 'dates' && plan.dates.some(function (d) { return d < t; })) warnings.push('Some dates have already passed.');
+    }
+    var recs = [rec];
+    if (many) {
+      var sid = 'ser-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      recs = plan.dates.map(function (d, i) {
+        var r = Object.assign({}, rec, { date: d, repeat: 'once', seriesId: sid, seriesNo: i + 1, seriesOf: plan.dates.length, seriesRule: plan.text });
+        if (r.coops.length === 1) { var fl2 = C.flockInCoop(st(), r.coops[0], d); if (fl2) r.flockId = fl2.id; else delete r.flockId; }
+        return r;
+      });
+    }
+    preview({ title: emergency ? 'Emergency report' : many ? 'New tasks (' + recs.length + ')' : 'New task', gold: false, errors: errors, warnings: warnings, confirm: emergency ? 'Send emergency' : 'Confirm & save',
+      rows: [['Type', esc(rec.kind)], ['What', esc(rec.title)], ['Where', esc(whereText(rec))]].concat(emergency ? [] : [[many ? 'Dates' : 'Date', many ? datesChips(plan.dates, 30) : dLong(rec.date)], ['Alarm', esc(rec.time || pad(C.alarmSettings(st()).hour) + ':00') + alarmBeforeText()], ['How often', esc(plan.text)], ['Assigned to', esc(userName(rec.assignee) || 'Anyone')]]).concat(rec.notes ? [['Notes', esc(rec.notes)]] : []),
+      onConfirm: async function () { var r = await E.save(recs); return many ? 'tasks' : 'task/' + r[0].id; } });
   };
 
   // ================================================================ SALES
@@ -990,14 +1067,181 @@
     var text = '*' + farmName().toUpperCase() + '*\nReceipt ' + x.receiptNo + ' · ' + dLong(x.date) + '\nCustomer: ' + c.name + '\n\n' +
       lines.map(function (l) { return l[0] + ' = ' + l[1]; }).join('\n') + '\n\nThis sale: ' + cur(tt.totalCents) + '\nBalance brought forward: ' + cur(lp.before) + '\nTotal due: ' + cur(lp.before + tt.totalCents) +
       '\n' + (x.payments || []).map(function (p) { return 'Paid (' + p.method + '): ' + curN(p.amount); }).join('\n') + '\n*Balance carried forward: ' + cur(lp.after) + '*\n\nServed by ' + userName(x.by) + '\n' + setting('receiptFooter', '');
+    var tm = x.createdAt ? new Date(x.createdAt) : null;
+    S.receiptDoc = { kind: 'sale', title: 'RECEIPT', no: x.receiptNo, date: x.date, time: tm && !isNaN(tm) ? pad(tm.getHours()) + ':' + pad(tm.getMinutes()) : '',
+      customer: c.name || '', phone: c.phone || '', by: userName(x.by), byLabel: 'Served by',
+      items: x.items.map(function (it) { return { name: lineName(it), qty: C.int(it.qty), price: Math.round(num(it.price) * 100), amount: Math.round(it.qty * it.price * 100) }; }),
+      totals: [['This sale', tt.totalCents], ['Balance brought forward', lp.before], ['Total due', lp.before + tt.totalCents]].concat((x.payments || []).map(function (p) { return ['Paid · ' + p.method + (p.ref ? ' (' + p.ref + ')' : ''), C.cents(p.amount)]; })),
+      balanceLabel: 'Balance carried forward', balance: lp.after, paidNow: tt.paidCents, due: lp.before + tt.totalCents };
+    S.receiptDoc.sms = smsText(S.receiptDoc);
     return '<div class="no-print">' + back('home', 'Home') + '</div>' + html + receiptButtons(c, text, 'sale-new');
   };
   function receiptButtons(c, text, again) {
+    var d = S.receiptDoc || {};
     return '<div class="stack no-print" style="max-width:420px;margin:14px auto 0">' +
-      (c.phone ? '<a class="btn wa block" target="_blank" rel="noopener" href="' + esc(waLink(c.phone, text)) + '">Send on WhatsApp</a>' : '<div class="alert warn small">No phone number for this customer — add one to send receipts on WhatsApp.</div>') +
-      '<div class="grid g2"><button class="btn light" type="button" data-act="print">Print / Save PDF</button><button class="btn light" type="button" data-act="share" data-text="' + esc(text) + '">Share…</button></div>' +
+      '<div class="small bold" style="margin-top:4px">Send to ' + esc(c.name || 'the customer') + (c.phone ? ' · ' + esc(c.phone) : '') + '</div>' +
+      '<div class="grid g2"><button class="btn gold" type="button" data-act="receiptFile" data-as="pdf">📄 Send PDF</button><button class="btn gold" type="button" data-act="receiptFile" data-as="png">🖼 Send picture</button></div>' +
+      (c.phone ? '<div class="grid g2"><a class="btn wa" target="_blank" rel="noopener" href="' + esc(waLink(c.phone, text)) + '">WhatsApp text</a><a class="btn light" href="' + esc(smsLink(c.phone, d.sms || '')) + '">💬 SMS</a></div>'
+        : '<div class="alert warn small">No phone number for this customer — add one on their page to send WhatsApp text or SMS. PDF and picture still work.</div>') +
+      '<p class="tiny muted" style="margin:0">PDF / picture: choose WhatsApp, then the customer’s chat. WhatsApp text and SMS go straight to their number.</p>' +
+      '<div class="grid g2"><button class="btn light" type="button" data-act="print">Print</button><button class="btn light" type="button" data-act="share" data-text="' + esc(text) + '">Share text…</button></div>' +
       '<a class="btn gold block" href="#' + again + '">' + (again === 'sale-new' ? '+ Next sale' : 'Done') + '</a></div>';
   }
+  // ---------------- receipt as a picture / PDF (drawn here, so it works offline) ----------------
+  function smsLink(phone, body) { var n = String(phone || '').replace(/[^\d+]/g, ''); return 'sms:' + n + '?body=' + encodeURIComponent(body); }
+  function smsText(d) {
+    var money = function (c) { return 'GHS' + (c / 100).toFixed(2); };
+    var t = farmName() + ': ' + (d.kind === 'payment' ? 'Payment ' : 'Receipt ') + d.no + ', ' + dShort(d.date) + '. ';
+    if (d.kind === 'sale') t += d.items.map(function (i) { return i.qty + ' ' + i.name; }).join(', ') + ' = ' + money(d.totals[0][1]) + '. ';
+    t += 'Paid ' + money(d.paidNow) + '. ' + (d.balance > 0 ? 'Balance ' + money(d.balance) + '.' : 'Fully paid.');
+    var momo = setting('momoPay', ''); if (momo && d.balance > 0) t += ' MoMo: ' + momo + '.';
+    return t + ' Thank you!';
+  }
+  var logoImg = null;
+  function loadLogo() {
+    return new Promise(function (ok) {
+      if (logoImg) return ok(logoImg);
+      var im = new Image(); im.onload = function () { logoImg = im; ok(im); }; im.onerror = function () { ok(null); }; im.src = LOGO;
+    });
+  }
+  function wrapText(ctx, text, maxW) {
+    var words = String(text).split(' '), lines = [], cur2 = '';
+    words.forEach(function (w) { var tryL = cur2 ? cur2 + ' ' + w : w; if (ctx.measureText(tryL).width > maxW && cur2) { lines.push(cur2); cur2 = w; } else cur2 = tryL; });
+    if (cur2) lines.push(cur2);
+    return lines;
+  }
+  async function drawReceipt(d) {
+    var W = 1080, P = 64, F = '"Inter", "Segoe UI", Arial, sans-serif', FD = '"Archivo", "Inter", Arial, sans-serif';
+    try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (e) {}
+    var logo = await loadLogo();
+    var money = function (c) { return 'GH₵ ' + (c / 100).toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+    // measure first, then draw at the right height
+    var meas = document.createElement('canvas').getContext('2d');
+    meas.font = '500 30px ' + F;
+    var itemLines = d.items.map(function (it) { return wrapText(meas, it.name, 470); });
+    var H = 300 + 230 + (d.items.length ? 80 + itemLines.reduce(function (a, l) { return a + 34 + l.length * 38; }, 0) : 0) + d.totals.length * 52 + 150 + 220;
+    var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    var g = cv.getContext('2d');
+    g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, W, H);
+    // header band
+    g.fillStyle = '#1F4D2C'; g.fillRect(0, 0, W, 250);
+    g.fillStyle = '#F2B705'; g.fillRect(0, 250, W, 10);
+    if (logo) { g.save(); g.fillStyle = '#FFFFFF'; roundRect(g, P, 50, 150, 150, 28); g.fill(); g.drawImage(logo, P + 10, 60, 130, 130); g.restore(); }
+    var tx = logo ? P + 180 : P;
+    g.fillStyle = '#FFFFFF'; g.font = '800 46px ' + FD; g.textBaseline = 'alphabetic';
+    wrapText(g, farmName(), W - tx - P - 10).slice(0, 2).forEach(function (l, i) { g.fillText(l, tx, 105 + i * 52); });
+    g.font = '400 26px ' + F; g.fillStyle = '#DDEBDF';
+    var sub = [setting('location', ''), setting('phone', '')].filter(Boolean).join('  ·  ');
+    if (sub) g.fillText(sub, tx, 205);
+    // title
+    var y = 330;
+    g.fillStyle = '#1B1B1B'; g.font = '800 40px ' + FD; g.fillText(d.title, P, y);
+    g.textAlign = 'right'; g.font = '700 30px ' + F; g.fillStyle = '#1F4D2C'; g.fillText('No. ' + d.no, W - P, y); g.textAlign = 'left';
+    // info grid
+    y += 50;
+    var info = [['Date', dLong(d.date) + (d.time ? ' · ' + d.time : '')], ['Customer', d.customer + (d.phone ? ' · ' + d.phone : '')], [d.byLabel, d.by]];
+    info.forEach(function (r) {
+      g.font = '500 24px ' + F; g.fillStyle = '#7A776C'; g.fillText(r[0], P, y + 26);
+      g.font = '600 28px ' + F; g.fillStyle = '#1B1B1B'; g.fillText(wrapText(g, r[1], W - P * 2 - 220)[0] || '', P + 220, y + 26);
+      y += 50;
+    });
+    y += 10;
+    // items table
+    if (d.items.length) {
+      g.fillStyle = '#F5F2EA'; roundRect(g, P - 16, y, W - P * 2 + 32, 60, 12); g.fill();
+      g.font = '700 24px ' + F; g.fillStyle = '#5C5A52';
+      g.fillText('ITEM', P, y + 39); g.textAlign = 'right'; g.fillText('QTY', 640, y + 39); g.fillText('PRICE', 820, y + 39); g.fillText('AMOUNT', W - P, y + 39); g.textAlign = 'left';
+      y += 80;
+      d.items.forEach(function (it, i) {
+        var ls = itemLines[i];
+        g.font = '500 30px ' + F; g.fillStyle = '#1B1B1B';
+        ls.forEach(function (l, k) { g.fillText(l, P, y + 30 + k * 38); });
+        g.textAlign = 'right'; g.font = '600 30px ' + F;
+        g.fillText(String(it.qty), 640, y + 30); g.font = '400 28px ' + F; g.fillText((it.price / 100).toFixed(2), 820, y + 30);
+        g.font = '700 30px ' + F; g.fillText((it.amount / 100).toFixed(2), W - P, y + 30); g.textAlign = 'left';
+        y += ls.length * 38 + 16;
+        g.strokeStyle = '#EDE7D6'; g.lineWidth = 2; g.beginPath(); g.moveTo(P, y); g.lineTo(W - P, y); g.stroke();
+        y += 18;
+      });
+    }
+    // totals
+    y += 6;
+    d.totals.forEach(function (r) {
+      g.font = '500 28px ' + F; g.fillStyle = '#5C5A52'; g.fillText(r[0], 470, y + 30);
+      g.textAlign = 'right'; g.font = '700 30px ' + F; g.fillStyle = '#1B1B1B'; g.fillText(money(r[1]), W - P, y + 30); g.textAlign = 'left';
+      y += 52;
+    });
+    // balance box
+    y += 14;
+    g.fillStyle = '#FFF4CC'; roundRect(g, P - 16, y, W - P * 2 + 32, 96, 16); g.fill();
+    g.font = '800 32px ' + FD; g.fillStyle = '#1B1B1B'; g.fillText(d.balanceLabel, P + 8, y + 60);
+    g.textAlign = 'right'; g.font = '800 40px ' + FD; g.fillStyle = d.balance > 0 ? '#B3261E' : '#1F4D2C'; g.fillText(money(d.balance), W - P - 8, y + 62); g.textAlign = 'left';
+    y += 130;
+    // stamp
+    var paid = d.balance <= 0;
+    g.save(); g.translate(P + 150, y + 10); g.rotate(-0.08);
+    g.strokeStyle = paid ? '#1F4D2C' : '#B3261E'; g.lineWidth = 5; roundRect(g, -140, -40, 280, 80, 14); g.stroke();
+    g.font = '800 34px ' + FD; g.fillStyle = paid ? '#1F4D2C' : '#B3261E'; g.textAlign = 'center'; g.fillText(paid ? 'PAID IN FULL' : 'BALANCE DUE', 0, 12); g.restore();
+    // footer
+    g.textAlign = 'center'; g.fillStyle = '#5C5A52'; g.font = '500 26px ' + F;
+    var fy = y + 100;
+    var momo = setting('momoPay', '');
+    if (momo) { g.font = '700 26px ' + F; g.fillStyle = '#1B1B1B'; g.fillText('Pay by MoMo: ' + momo, W / 2, fy); fy += 42; }
+    g.font = '500 26px ' + F; g.fillStyle = '#5C5A52';
+    wrapText(g, setting('receiptFooter', 'Thank you!'), W - P * 2).slice(0, 2).forEach(function (l) { g.fillText(l, W / 2, fy); fy += 36; });
+    g.font = '400 20px ' + F; g.fillStyle = '#A29E92'; g.fillText('Printed ' + dShort(today()) + ' · The Egg Man Farms app', W / 2, fy + 10);
+    g.textAlign = 'left';
+    // trim to the real height
+    var outH = Math.min(H, fy + 50), out2 = document.createElement('canvas'); out2.width = W; out2.height = outH;
+    out2.getContext('2d').drawImage(cv, 0, 0);
+    return out2;
+  }
+  function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+  function dataUrlBytes(u) { var b = atob(u.split(',')[1]), a = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
+  // one-page PDF holding the receipt picture (no library needed)
+  function canvasToPdf(cv, title) {
+    var jpg = dataUrlBytes(cv.toDataURL('image/jpeg', 0.92)), pw = 420, ph = Math.round(cv.height / cv.width * pw);
+    var enc = function (str) { var a = new Uint8Array(str.length); for (var i = 0; i < str.length; i++) a[i] = str.charCodeAt(i) & 255; return a; };
+    var safe = String(title || 'Receipt').replace(/[^\x20-\x7E]/g, '').replace(/[()\\]/g, '');
+    var content = 'q ' + pw + ' 0 0 ' + ph + ' 0 0 cm /Im0 Do Q';
+    var parts = [], offs = [], len = 0;
+    var push = function (x) { var b = typeof x === 'string' ? enc(x) : x; parts.push(b); len += b.length; };
+    push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+    var obj = function (n, body) { offs[n] = len; push(n + ' 0 obj\n'); body.forEach(push); push('\nendobj\n'); };
+    obj(1, ['<< /Type /Catalog /Pages 2 0 R >>']);
+    obj(2, ['<< /Type /Pages /Kids [3 0 R] /Count 1 >>']);
+    obj(3, ['<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + pw + ' ' + ph + '] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>']);
+    obj(4, ['<< /Type /XObject /Subtype /Image /Width ' + cv.width + ' /Height ' + cv.height + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + jpg.length + ' >>\nstream\n', jpg, '\nendstream']);
+    obj(5, ['<< /Length ' + content.length + ' >>\nstream\n' + content + '\nendstream']);
+    obj(6, ['<< /Title (' + safe + ') /Producer (The Egg Man Farms app) >>']);
+    var xref = len, x = 'xref\n0 7\n0000000000 65535 f \n';
+    for (var i = 1; i <= 6; i++) x += String(offs[i]).padStart(10, '0') + ' 00000 n \n';
+    push(x + 'trailer\n<< /Size 7 /Root 1 0 R /Info 6 0 R >>\nstartxref\n' + xref + '\n%%EOF\n');
+    var out = new Uint8Array(len), p2 = 0; parts.forEach(function (b) { out.set(b, p2); p2 += b.length; });
+    return new Blob([out], { type: 'application/pdf' });
+  }
+  function blobToBase64(blob) { return new Promise(function (ok, bad) { var r = new FileReader(); r.onload = function () { ok(String(r.result).split(',')[1]); }; r.onerror = bad; r.readAsDataURL(blob); }); }
+  async function shareFile(blob, name, text) {
+    if (NATIVE && NATIVE.shareFile) { NATIVE.shareFile(await blobToBase64(blob), blob.type, name, text || ''); return 'shared'; }
+    var file = null; try { file = new File([blob], name, { type: blob.type }); } catch (e) {}
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: name }); return 'shared'; } catch (e) { if (e && e.name === 'AbortError') return 'cancelled'; }
+    }
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+    toast('Saved to your downloads — attach it in WhatsApp'); return 'downloaded';
+  }
+  ACT.receiptFile = async function (b) {
+    var d = S.receiptDoc; if (!d) return;
+    b.disabled = true; var old = b.textContent; b.textContent = 'Making it…';
+    try {
+      var cv = await drawReceipt(d), base = (d.kind === 'payment' ? 'Payment-' : 'Receipt-') + d.no + '-' + (d.customer || 'customer').replace(/[^A-Za-z0-9]+/g, '-');
+      var blob = b.dataset.as === 'pdf' ? canvasToPdf(cv, farmName() + ' ' + d.title + ' ' + d.no) : await new Promise(function (ok) { cv.toBlob(ok, 'image/png'); });
+      S.lastReceiptBlob = blob;
+      await shareFile(blob, base + (b.dataset.as === 'pdf' ? '.pdf' : '.png'), farmName() + ' — ' + d.title.toLowerCase() + ' ' + d.no);
+    } catch (e) { console.warn(e); toast('Could not make the file: ' + (e.message || e)); }
+    b.disabled = false; b.textContent = old;
+  };
   ACT.print = function () { if (NATIVE && NATIVE.print) { try { NATIVE.print(); return; } catch (e) {} } window.print(); };
   ACT.share = function (b) {
     var text = b.dataset.text;
@@ -1117,6 +1361,12 @@
       kv('Received by', esc(userName(p.by))) + '<div class="line"></div>' + kv('Balance before', cur(lp.before)) + kv('Paid · ' + p.method + (p.ref ? ' (' + esc(p.ref) + ')' : ''), curN(p.amount)) +
       '<div class="kv" style="background:var(--yellow-soft);border-radius:8px;padding:8px 10px"><span class="bold" style="color:var(--ink)">Balance now</span><b>' + cur(lp.after) + '</b></div><p class="tiny muted" style="text-align:center">' + esc(setting('receiptFooter', '')) + '</p></div>';
     var text = '*' + farmName().toUpperCase() + '*\nPayment receipt ' + p.receiptNo + ' · ' + dLong(p.date) + '\nCustomer: ' + c.name + '\nBalance before: ' + cur(lp.before) + '\nPaid (' + p.method + '): ' + curN(p.amount) + '\n*Balance now: ' + cur(lp.after) + '*\nReceived by ' + userName(p.by) + '\n' + setting('receiptFooter', '');
+    var tm = p.createdAt ? new Date(p.createdAt) : null;
+    S.receiptDoc = { kind: 'payment', title: 'PAYMENT RECEIPT', no: p.receiptNo, date: p.date, time: tm && !isNaN(tm) ? pad(tm.getHours()) + ':' + pad(tm.getMinutes()) : '',
+      customer: c.name || '', phone: c.phone || '', by: userName(p.by), byLabel: 'Received by', items: [],
+      totals: [['Balance before', lp.before], ['Paid · ' + p.method + (p.ref ? ' (' + p.ref + ')' : ''), C.cents(p.amount)]],
+      balanceLabel: 'Balance now', balance: lp.after, paidNow: C.cents(p.amount), due: lp.before };
+    S.receiptDoc.sms = smsText(S.receiptDoc);
     return '<div class="no-print">' + back('customer/' + p.customerId, c.name) + '</div>' + html + receiptButtons(c, text, 'customer/' + p.customerId);
   };
 
@@ -1125,8 +1375,8 @@
   routes.crates = function (date) {
     var s = st(), t = date || today();
     var people = role() === 'sales' ? [me()] : salesUsers();
-    var out = info('crates') + head(role() === 'sales' ? 'My eggs' : 'Crates out & returns', dLong(t) + ' · eggs taken to shops and markets',
-      '<label class="small" style="flex-direction:row;align-items:center;gap:6px">Day<input type="date" value="' + t + '" max="' + today() + '" data-act-change="crateDate" style="min-height:40px"></label>');
+    var out = head(role() === 'sales' ? 'My eggs' : 'Crates out & returns', dLong(t) + ' · eggs taken to shops and markets',
+      '<label class="small" style="flex-direction:row;align-items:center;gap:6px">Day<input type="date" value="' + t + '" max="' + today() + '" data-act-change="crateDate" style="min-height:40px"></label>') + info('crates');
     if (role() !== 'sales') {
       var store = C.eggStore(s, t);
       out += '<div class="grid g2" style="margin-bottom:12px">' + kpiBox('Good eggs in store', crates(store.good), twoColours() ? 'white ' + crates(store.white.good) + ' · brown ' + crates(store.brown.good) : 'end of ' + dShort(t), 'dark') + kpiBox('Cracked in store', crates(store.cracked), twoColours() ? 'white ' + crates(store.white.cracked) + ' · brown ' + crates(store.brown.cracked) : '') + '</div>';
@@ -1138,16 +1388,53 @@
       var stTxt = c.returnRecorded ? (c.balanced ? '<span class="chip green">Balanced ✓</span>' : '<span class="chip red">' + crates(c.remaining.good) + ' not accounted for</span>') : (c.out.good || c.opening.good ? '<span class="chip yellow">Still out</span>' : '<span class="chip">Nothing taken</span>');
       var money = handIn(u.id, t);
       return '<div class="card stack"><div class="row between"><h2>' + esc(u.name) + '</h2>' + stTxt + '</div>' +
-        '<div class="grid g3 small">' + mini('Had from before', crates(c.opening.good)) + mini('Took today', crates(c.out.good)) + mini('Sold', crates(c.sold.good)) +
+        '<div class="grid g3 small">' + mini('Had from before', crates(c.opening.good)) + mini('Took today', crates(c.out.good) + (c.out.cracked ? ' + ' + crates(c.out.cracked) + ' cracked' : '')) + mini('Sold', crates(c.sold.good)) +
         mini('Returned', crates(c.returned.good)) + mini('Broken', c.broken.good + ' pcs') + mini('Still with them', crates(c.remaining.good), c.returnRecorded && c.remaining.good ? 'red' : '') + '</div>' +
         (c.out.cracked || c.sold.cracked || c.remaining.cracked ? '<div class="tiny muted">Cracked: took ' + crates(c.out.cracked) + ', sold ' + crates(c.sold.cracked) + ', returned ' + crates(c.returned.cracked) + ', still with them ' + crates(c.remaining.cracked) + '</div>' : '') +
+        movesToday(u.id, t) +
         '<div class="small">Money to hand in: <b>' + cur(money.total) + '</b> <span class="muted">(cash ' + cur(money.Cash) + ' · MoMo ' + cur(money.MoMo) + (money.Bank ? ' · bank ' + cur(money.Bank) : '') + ')</span></div>' +
         (isRole('owner', 'manager') && t === today() ? '<div class="grid g2"><a class="btn gold sm" href="#crates-out/' + u.id + '">Give out eggs</a><a class="btn ghost sm" href="#crates-return/' + u.id + '">Record return</a></div>' : '') + '</div>';
     }).join('') + '</div>';
-    if (!people.length) out += '<div class="empty">No active salespeople. Add them in the Users tab of your Google Sheet.</div>';
+    if (!people.length) out += '<div class="empty">No active salespeople yet. The owner adds them in Settings › People &amp; PINs (job: Salesperson).</div>';
     return out;
   };
   ACT.crateDate = function (el) { go('crates/' + el.value); };
+  // every give-out and return of the day, with time, so you can see exactly what was entered
+  function movesToday(uid, t) {
+    var l = C.sortChrono(live(st().stock).filter(function (m) { return m.salesUserId === uid && m.date === t && (m.kind === 'out' || m.kind === 'return'); }));
+    if (!l.length) return '';
+    return '<div class="small" style="background:#F5F2EA;border-radius:8px;padding:8px 10px">' + l.map(function (m) {
+      var parts = { brown: { good: 0, cracked: 0 }, white: { good: 0, cracked: 0 } };
+      (m.lines || []).forEach(function (x) { var e = C.lineEggs(st(), x), col = x.colour === 'white' ? 'white' : 'brown'; parts[col].good += e.good; parts[col].cracked += e.cracked; });
+      var txt = ['brown', 'white'].filter(function (c) { return parts[c].good || parts[c].cracked; }).map(function (c) {
+        return (twoColours() ? c + ': ' : '') + crates(parts[c].good) + ' good' + (parts[c].cracked ? ', ' + crates(parts[c].cracked) + ' cracked' : '');
+      }).join(' · ') || 'nothing';
+      if (m.kind === 'return' && (C.int(m.brokenGood) || C.int(m.brokenCracked))) txt += ' · broken ' + (C.int(m.brokenGood) + C.int(m.brokenCracked)) + ' pcs';
+      var tm = m.createdAt ? new Date(m.createdAt) : null;
+      return '<div>' + (tm && !isNaN(tm) ? '<span class="muted">' + pad(tm.getHours()) + ':' + pad(tm.getMinutes()) + '</span> ' : '') + (m.kind === 'out' ? '⬆ <b>Given</b> ' : '⬇ <b>Returned</b> ') + txt + (m.by ? ' <span class="tiny muted">— ' + esc(userName(m.by)) + '</span>' : '') + '</div>';
+    }).join('') + '</div>';
+  }
+  // running total on the give-out / return forms, shown at the top while you type
+  function eggLinesLive(f) {
+    var box = f.querySelector('.lines-live'); if (!box) return;
+    var prefix = f.dataset.form === 'crateout' ? 'out_' : 'ret_', lines = readLines(f, prefix), pcs = linesPieces(lines);
+    var store = C.eggStore(st(), today()), cols = { brown: 0, white: 0 };
+    lines.forEach(function (l) { var e = C.lineEggs(st(), l); cols[l.colour === 'white' ? 'white' : 'brown'] += e.good + e.cracked; });
+    var what = f.dataset.form === 'crateout' ? 'Giving now' : 'Bringing back';
+    if (!lines.length) { box.innerHTML = '<b>' + what + ':</b> nothing yet — type the numbers below or tap +'; box.className = 'lines-live alert small'; return; }
+    var after = f.dataset.form === 'crateout' ? store.good - pcs.good : store.good + pcs.good;
+    var short = f.dataset.form === 'crateout' && (pcs.good > store.good || pcs.cracked > store.cracked);
+    box.className = 'lines-live alert small ' + (short ? 'warn' : 'ok');
+    box.innerHTML = '<b>' + what + ': ' + crates(pcs.good) + ' good' + (pcs.cracked ? ' + ' + crates(pcs.cracked) + ' cracked' : '') + '</b>' +
+      (twoColours() ? '<br>brown ' + crates(cols.brown) + ' · white ' + crates(cols.white) : '') +
+      (after < 0 ? '<br><b>More than the store has — short by ' + crates(-after) + ' good.</b> Are today’s daily records entered?' : '<br>Store after: ' + crates(after) + ' good' + (short ? ' — <b>more cracked eggs than the store has</b>' : ''));
+  }
+  LIVE.crateout = eggLinesLive;
+  LIVE.crateret = eggLinesLive;
+  // keep the box you are typing in above the phone keyboard
+  document.addEventListener('focusin', function (e) {
+    if (e.target && e.target.matches && e.target.matches('.qty input, form[data-form] input[type=number]')) setTimeout(function () { try { e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (x) {} }, 350);
+  });
   function mini(l, v, cls) { return '<div style="background:#F5F2EA;border-radius:8px;padding:6px 8px"><div class="tiny muted">' + esc(l) + '</div><div class="bold ' + (cls || '') + '">' + esc(v) + '</div></div>'; }
   function handIn(uid, t) {
     var m = { Cash: 0, MoMo: 0, Bank: 0, total: 0 };
@@ -1168,7 +1455,7 @@
   routes['crates-out'] = function (uid) {
     var store = C.eggStore(st(), today());
     return back('crates', 'Crates') + head('Give out eggs to ' + userName(uid), 'Store has ' + storeText(store)) +
-      '<form class="card" data-form="crateout" data-uid="' + esc(uid) + '">' + eggLinesForm('out_') + '<button class="btn gold" type="submit">Next: preview →</button></form>';
+      '<form class="card" data-form="crateout" data-uid="' + esc(uid) + '"><div class="lines-live alert small" aria-live="polite"><b>Giving now:</b> nothing yet — type the numbers below or tap +</div>' + eggLinesForm('out_') + '<button class="btn gold" type="submit">Next: preview →</button></form>';
   };
   FORMS.crateout = function (f) {
     var uid = f.dataset.uid, lines = readLines(f, 'out_'), pcs = linesPieces(lines), store = C.eggStore(st(), today());
@@ -1177,17 +1464,19 @@
     ['brown', 'white'].forEach(function (c) {
       var need = { good: 0, cracked: 0 }; lines.filter(function (l) { return l.colour === c; }).forEach(function (l) { var e = C.lineEggs(st(), l); need.good += e.good; need.cracked += e.cracked; });
       var w = twoColours() ? c + ' ' : '';
-      if (need.good > store[c].good) warnings.push('The store shows only ' + crates(Math.max(0, store[c].good)) + ' good ' + w + 'eggs. Check today’s daily records are entered.');
-      if (need.cracked > store[c].cracked) warnings.push('The store shows only ' + crates(Math.max(0, store[c].cracked)) + ' cracked ' + w + 'eggs.');
+      var strict = String(setting('giveOutStrict', 'no')).toLowerCase() === 'yes', list = strict ? errors : warnings;
+      var hint = strict ? ' Enter today’s daily records first, or ask the owner to correct the store count.' : ' Check today’s daily records are entered.';
+      if (need.good > store[c].good) list.push('The store shows only ' + crates(Math.max(0, store[c].good)) + ' good ' + w + 'eggs.' + hint);
+      if (need.cracked > store[c].cracked) list.push('The store shows only ' + crates(Math.max(0, store[c].cracked)) + ' cracked ' + w + 'eggs.' + hint);
     });
-    preview({ title: 'Eggs to ' + userName(uid), errors: errors, warnings: warnings, gold: true,
+    preview({ title: 'Eggs to ' + userName(uid), errors: errors, warnings: warnings, gold: true, doneMessage: 'Given to ' + userName(uid) + ': ' + crates(pcs.good) + (pcs.cracked ? ' + ' + crates(pcs.cracked) + ' cracked' : '') + ' ✓',
       rows: lines.map(function (l) { return [lineName(l), l.qty]; }).concat([['Good eggs', crates(pcs.good)], ['Cracked eggs', crates(pcs.cracked)], ['Store after', crates(store.good - pcs.good) + ' good']]),
       onConfirm: async function () { await E.save({ type: 'stock', kind: 'out', date: today(), salesUserId: uid, lines: lines }); return 'crates'; } });
   };
   routes['crates-return'] = function (uid) {
     var c = C.carry(st(), uid, today());
     return back('crates', 'Crates') + head('Return from ' + userName(uid), 'With them now: ' + storeText(c.remaining)) +
-      '<form class="card" data-form="crateret" data-uid="' + esc(uid) + '"><h3>Eggs brought back</h3>' + eggLinesForm('ret_') +
+      '<form class="card" data-form="crateret" data-uid="' + esc(uid) + '"><h3>Eggs brought back</h3><div class="lines-live alert small" aria-live="polite"><b>Bringing back:</b> nothing yet — type the numbers below or tap +</div>' + eggLinesForm('ret_') +
       brokenFields() +
       '<div id="retLive" class="alert ok small"></div><button class="btn" type="submit">Next: preview →</button></form>';
   };
@@ -2106,9 +2395,26 @@
   routes.more = function () {
     return head('More') + '<div class="list">' + (NAV[role()] || []).map(function (n) { return '<a class="item" href="#' + n[0] + '">' + icon(n[2]) + '<div class="grow t">' + esc(n[1]) + '</div>›</a>'; }).join('') + '</div>';
   };
+  // ---------------- laptop view on a phone (per phone) ----------------
+  var VIEWPORT_PHONE = 'width=device-width, initial-scale=1, viewport-fit=cover';
+  function laptopOn() { if (NATIVE && NATIVE.isDesktopMode) { try { return !!NATIVE.isDesktopMode(); } catch (e) {} } return lsGet('eggman.laptop', false) === true; }
+  function applyLaptop() {
+    var m = document.querySelector('meta[name=viewport]'); if (!m) return;
+    m.setAttribute('content', laptopOn() ? 'width=1280' : VIEWPORT_PHONE);
+    document.documentElement.classList.toggle('laptop-view', laptopOn());
+  }
+  ACT.laptopToggle = function () {
+    var on = !laptopOn(); lsSet('eggman.laptop', on);
+    if (NATIVE && NATIVE.setDesktopMode) { try { NATIVE.setDesktopMode(on); return; } catch (e) {} }
+    applyLaptop(); toast(on ? 'Laptop view ON — pinch with two fingers to zoom' : 'Phone view ON'); render();
+  };
+  applyLaptop();
   routes.settings = function () {
     var s = st(), p = E.pending().length;
     var out = head('Settings', esc(me().name) + ' · ' + esc(role()));
+    out += '<div class="card stack" style="margin-bottom:12px"><div class="row between"><h2>This phone</h2><span class="chip ' + (laptopOn() ? 'green' : '') + '">' + (laptopOn() ? 'Laptop view' : 'Phone view') + '</span></div>' +
+      '<p class="small muted" style="margin:0">Laptop view shows the wide screen (menu on the side, big tables) shrunk to fit. Pinch with two fingers to zoom. Good for reports; phone view is easier for entering records.</p>' +
+      '<button class="btn light" type="button" data-act="laptopToggle">' + (laptopOn() ? '📱 Back to phone view' : '💻 Switch to laptop view') + '</button></div>';
     out += '<div class="card"><h2>Sync with Google Sheets</h2>' + kv('Internet', navigator.onLine ? 'Online' : 'Offline') + kv('Waiting to send', p) +
       kv('Last sync', S.meta.lastSync ? new Date(S.meta.lastSync).toLocaleString() : 'never') + (S.meta.lastError ? kv('Problem', esc(S.meta.lastError), 'red') : '') +
       '<div class="grid g2" style="margin-top:10px"><button class="btn" type="button" data-act="syncNow">Sync now</button><button class="btn light" type="button" data-act="fullRefresh">Reload all from Sheet</button></div></div>';
@@ -2141,7 +2447,7 @@
       out += '<div class="card stack" style="margin-top:12px;border-color:#E7A08D"><h2>Start fresh</h2><p class="small muted" style="margin:0">Delete ALL records — coops, daily records, tasks, sales, payments, customers, crates, feed, medicine and expenses — on the Sheet and on every phone. Your settings, people, prices, items and schedule are kept. A backup copy of the Sheet is saved in Google Drive first.</p>' +
         '<a class="btn red" href="#start-fresh">Start fresh…</a><p class="tiny muted" style="margin:0">This button switches itself off again after it is used.</p></div>';
     }
-    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v2.0' + (NATIVE ? ' (Android app)' : '') + ' · data is kept on this device and in your Google Sheet.</p>';
+    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v2.2' + (NATIVE ? ' (Android app)' : '') + ' · data is kept on this device and in your Google Sheet.</p>';
     return out;
   };
   function startFreshOn() { return String(setting('allowStartFresh', 'no')).trim().toLowerCase() === 'yes'; }
@@ -2179,10 +2485,10 @@
   var UNITS = ['bag', 'kg', 'vial', 'bottle', 'sachet', 'pack', 'litre', 'dose', 'piece'];
   var SETTING_FIELDS = [
     ['farmName', 'Farm name (on receipts)'], ['phone', 'Farm phone (on receipts)'], ['location', 'Location (on receipts)'],
-    ['receiptFooter', 'Last line on receipts'], ['ownerWhatsapp', 'Owner WhatsApp, e.g. 233241234567'], ['ownerEmail', 'Owner email (alerts & monthly report)'],
+    ['receiptFooter', 'Last line on receipts'], ['momoPay', 'MoMo number for payments, on receipts (e.g. 024 123 4567 – The Egg Man Farms)'], ['ownerWhatsapp', 'Owner WhatsApp, e.g. 233241234567'], ['ownerEmail', 'Owner email (alerts & monthly report)'],
     ['reportEmails', 'Other emails for the monthly report (comma between)'],
     ['collectionTimes', 'Egg collection alarm times, e.g. 08:00, 12:00, 16:00'], ['alarmHour', 'Task alarm hour on the day (0–23)'], ['alarmEveningBefore', 'Reminder hour the evening before (0–23)'],
-    ['defaultEggColour', 'Main egg colour (brown / white) — for coops and old entries with no colour'], ['tasksDoneBy', 'Who can tick tasks done (all / owner)'], ['allowStartFresh', 'Allow Start fresh button (yes / no) — keep it “no”'], ['newCustomerCredit', 'New customers can pay part (yes / no)'], ['newCustomerLimit', 'Debt limit for new customers, GH₵ (0 = no limit)'],
+    ['defaultEggColour', 'Main egg colour (brown / white) — for coops and old entries with no colour'], ['tasksDoneBy', 'Who can tick tasks done (all / owner)'], ['giveOutStrict', 'Stop giving out more eggs than the store has (yes / no)'], ['allowStartFresh', 'Allow Start fresh button (yes / no) — keep it “no”'], ['newCustomerCredit', 'New customers can pay part (yes / no)'], ['newCustomerLimit', 'Debt limit for new customers, GH₵ (0 = no limit)'],
     ['coops', 'Number of coops'], ['eggsPerCrate', 'Eggs in a crate'], ['kgPerBag', 'Kg in a feed bag']];
   function slug(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'x'; }
   function editorDef(table) {
@@ -2201,9 +2507,9 @@
         rows: function () { return s.items; }, idPrefix: 'i-', keep: true,
         cols: [['name', 'Name', 'text'], ['category', 'Type', ['feed', 'ingredient', 'medicine'], { feed: 'Feed', ingredient: 'Ingredient', medicine: 'Medicine / vaccine' }],
           ['unit', 'Unit', UNITS], ['kgPerBag', 'Kg per bag', 'num'], ['lowLevel', 'Warn at', 'num'], ['active', 'In use', 'check']] },
-      Schedule: { title: 'Vaccination & health schedule', help: 'Day 1 = the day chicks arrive. "Repeat every" + "until day" repeat a step (e.g. every 84 days until day 504). Ask your vet to check it. Changes apply to flocks you add after saving.',
+      Schedule: { title: 'Vaccination & health schedule', help: 'Works by bird age: day 1 = the day chicks arrive, so it fits every new flock by itself. For something done several days in a row, put “Repeat every” 1 and the last day. Each row is shown in plain words under it. Ask your vet to check it. Changes apply to flocks you add after saving.',
         rows: function () { return s.template; }, removable: true,
-        cols: [['day', 'Day', 'num'], ['type', 'Type', KINDS], ['title', 'What to do', 'text'], ['everyDays', 'Repeat every (days)', 'num'], ['untilDay', 'Until day', 'num'], ['notes', 'Notes', 'text']] },
+        cols: [['day', 'Start on bird age (day)', 'num'], ['type', 'Type', KINDS], ['title', 'What to do', 'text'], ['everyDays', 'Repeat every … days (empty = once)', 'num'], ['untilDay', 'Last day (bird age)', 'num'], ['notes', 'Notes', 'text']] },
       Recipes: { title: 'Feed recipes', help: 'One row per ingredient. Rows with the same recipe name make one recipe.', removable: true,
         rows: function () { var out = []; s.recipes.forEach(function (r) { r.lines.forEach(function (l) { out.push({ recipeName: r.name, outputItemId: r.outputItemId, ingredientItemId: l.itemId, kg: l.kg }); }); }); return out; },
         cols: [['recipeName', 'Recipe name', 'text'], ['outputItemId', 'Makes', feeds.map(function (i) { return i.id; }), C.byId(feeds)],
@@ -2244,10 +2550,27 @@
         return '<div class="card stack" style="gap:8px"><div class="row between"><b>' + esc(r.name || r.title || r.recipeName || (table === 'Schedule' ? 'Day ' + (r.day || '?') : 'New')) + '</b>' +
           ((d.removable || r._new) ? '<button class="btn light sm" type="button" data-act="edRemove" data-i="' + i + '">Remove</button>' : '') + '</div>' +
           '<input type="hidden" name="r' + i + '_id" value="' + esc(r.id || '') + '"><input type="hidden" name="r' + i + '_new" value="' + (r._new ? '1' : '') + '">' +
-          '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">' + d.cols.map(function (c) { return cell(r, i, c); }).join('') + '</div></div>';
+          '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">' + d.cols.map(function (c) { return cell(r, i, c); }).join('') + '</div>' +
+          (table === 'Schedule' ? '<div class="alert ok small sched-sentence" data-i="' + i + '">' + esc(schedSentence(r)) + '</div>' : '') + '</div>';
       }).join('') +
       '<div class="grid g2"><button class="btn ghost" type="button" data-act="edAdd">+ Add a row</button><button class="btn light" type="button" data-act="edReset">Undo my changes</button></div>' +
       '<div class="sticky-actions"><button class="btn gold block" type="submit">Next: preview →</button></div></form>' + (table === 'Products' ? priceHistoryCard() : '');
+  };
+  // one schedule row in plain words, e.g. "From day 1 to day 5, every day: Vitamins"
+  function schedSentence(r) {
+    var day = C.int(r.day), every = C.int(r.everyDays), until = C.int(r.untilDay), what = (r.title || '…') + (r.type ? ' (' + r.type + ')' : '');
+    if (!day) return 'Write the bird age (day) to start.';
+    if (!every) return 'Once, on day ' + day + ' (week ' + Math.ceil(day / 7) + '): ' + what;
+    if (!until || until <= day) return 'From day ' + day + ', every ' + (every === 1 ? 'day' : every + ' days') + ' — put a last day, or it is done only once: ' + what;
+    var times = Math.floor((until - day) / every) + 1;
+    return 'From day ' + day + ' to day ' + until + ', every ' + (every === 1 ? 'day' : every + ' days') + ' (' + times + ' times): ' + what;
+  }
+  LIVE.seteditor = function (f) {
+    if (f.dataset.table !== 'Schedule') return;
+    f.querySelectorAll('.sched-sentence').forEach(function (box) {
+      var i = box.dataset.i, g = function (k) { return f.elements['r' + i + '_' + k] ? f.elements['r' + i + '_' + k].value : ''; };
+      box.textContent = schedSentence({ day: g('day'), type: g('type'), title: g('title'), everyDays: g('everyDays'), untilDay: g('untilDay') });
+    });
   };
   function readEditor(f) {
     var table = f.dataset.table, d = editorDef(table), n = C.int(val(f, 'count')), rows = [];
@@ -2336,7 +2659,7 @@
     var keys = Object.keys(cur); SETTING_FIELDS.forEach(function (x) { if (keys.indexOf(x[0]) < 0) keys.push(x[0]); });
     keys.forEach(function (k) {
       var field = f.elements[k], v = field ? field.value.trim() : cur[k];
-      if ((k === 'newCustomerCredit' || k === 'allowStartFresh' || k === 'tasksDoneBy' || k === 'defaultEggColour') && v) v = v.toLowerCase();
+      if ((k === 'newCustomerCredit' || k === 'allowStartFresh' || k === 'tasksDoneBy' || k === 'defaultEggColour' || k === 'giveOutStrict') && v) v = v.toLowerCase();
       rows.push({ key: k, value: v });
       if (field && String(cur[k] === undefined ? '' : cur[k]) !== v) changes.push([k, esc(String(cur[k] === undefined ? '' : cur[k]) || '—') + ' → <b>' + esc(v || '—') + '</b>']);
     });
@@ -2347,6 +2670,8 @@
     if (nc && nc !== 'yes' && nc !== 'no') errors.push('"New customers can pay part" must be yes or no.');
     var dc = val(f, 'defaultEggColour').trim().toLowerCase();
     if (dc && dc !== 'brown' && dc !== 'white') errors.push('"Main egg colour" must be brown or white.');
+    var gs = val(f, 'giveOutStrict').trim().toLowerCase();
+    if (gs && gs !== 'yes' && gs !== 'no') errors.push('"Stop giving out more eggs than the store has" must be yes or no.');
     var td = val(f, 'tasksDoneBy').trim().toLowerCase();
     if (td && td !== 'all' && td !== 'owner') errors.push('"Who can tick tasks done" must be all or owner.');
     var sf = val(f, 'allowStartFresh').trim().toLowerCase();
@@ -2495,5 +2820,5 @@
   });
 
   E.init().then(function () { render(); E.sync(); applyWake(); setTimeout(checkAlarms, 1500); pushNative(); });
-  window.EggApp = { render: render, checkAlarms: checkAlarms, onResume: function () { pushNative(); checkAlarms(); }, nativeAlarmList: nativeAlarmList, alarmState: function () { return { ringing: AL.ringing, src: AL.audio ? AL.audio.src : '' }; } };
+  window.EggApp = { render: render, checkAlarms: checkAlarms, receiptDoc: function () { return S.receiptDoc; }, onResume: function () { pushNative(); checkAlarms(); }, nativeAlarmList: nativeAlarmList, alarmState: function () { return { ringing: AL.ringing, src: AL.audio ? AL.audio.src : '' }; } };
 })();
