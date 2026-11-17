@@ -348,6 +348,14 @@
   function kpiBox(l, v, s, cls, vcls) { return '<div class="kpi ' + (cls || '') + '"><div class="l">' + esc(l) + '</div><div class="v ' + (vcls || '') + '">' + esc(v) + '</div><div class="s">' + esc(s || '') + '</div></div>'; }
   function alertsBlock(t, d) {
     var s = st(), a = [];
+    if (isRole('owner')) {
+      var seen = {}, bad = [];
+      live(s.products).forEach(function (p) {
+        if ((p.kind === 'good' || p.kind === 'cracked') && p.active !== false && !(C.int(p.eggsPerUnit) > 0)) bad.push(p.name + ' has no “Eggs in one”');
+        if (seen[p.id]) bad.push(p.name + ' is in the list twice'); seen[p.id] = 1;
+      });
+      if (bad.length) a.push('<a class="alert warn" style="display:block;text-decoration:none" href="#set/Products"><b>Check your products:</b> ' + esc(bad.join('; ')) + '. Tap to fix in Settings › Products.</a>');
+    }
     live(s.tasks).filter(function (x) { return x.kind === 'Emergency' && x.status === 'open'; }).forEach(function (x) {
       a.push('<a class="alert err" style="display:block;text-decoration:none" href="#task/' + x.id + '"><b>EMERGENCY · ' + esc(whereText(x)) + ':</b> ' + esc(x.title) + ' — reported by ' + esc(userName(x.by)) + '</a>');
     });
@@ -1492,8 +1500,10 @@
     var uid = f.dataset.uid, lines = readLines(f, 'out_'), pcs = linesPieces(lines), store = C.eggStore(st(), today());
     var errors = [], warnings = [];
     if (!lines.length) errors.push('Enter how many crates are given out.');
-    ['brown', 'white'].forEach(function (c) {
-      var need = { good: 0, cracked: 0 }; lines.filter(function (l) { return l.colour === c; }).forEach(function (l) { var e = C.lineEggs(st(), l); need.good += e.good; need.cracked += e.cracked; });
+    (twoColours() ? ['brown', 'white'] : ['all']).forEach(function (c) {
+      var need = { good: 0, cracked: 0 }; lines.filter(function (l) { return c === 'all' || l.colour === c; }).forEach(function (l) { var e = C.lineEggs(st(), l); need.good += e.good; need.cracked += e.cracked; });
+      if (!need.good && !need.cracked) return;
+      if (c === 'all') { store.all = { good: store.good, cracked: store.cracked }; }
       var w = twoColours() ? c + ' ' : '';
       var strict = String(setting('giveOutStrict', 'no')).toLowerCase() === 'yes', list = strict ? errors : warnings;
       var hint = strict ? ' Enter today’s daily records first, or ask the owner to correct the store count.' : ' Check today’s daily records are entered.';
@@ -2478,7 +2488,7 @@
       out += '<div class="card stack" style="margin-top:12px;border-color:#E7A08D"><h2>Start fresh</h2><p class="small muted" style="margin:0">Delete ALL records — coops, daily records, tasks, sales, payments, customers, crates, feed, medicine and expenses — on the Sheet and on every phone. Your settings, people, prices, items and schedule are kept. A backup copy of the Sheet is saved in Google Drive first.</p>' +
         '<a class="btn red" href="#start-fresh">Start fresh…</a><p class="tiny muted" style="margin:0">This button switches itself off again after it is used.</p></div>';
     }
-    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v2.3' + (NATIVE ? ' (Android app)' : '') + ' · data is kept on this device and in your Google Sheet.</p>';
+    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v2.4' + (NATIVE ? ' (Android app)' : '') + ' · data is kept on this device and in your Google Sheet.</p>';
     return out;
   };
   function startFreshOn() { return String(setting('allowStartFresh', 'no')).trim().toLowerCase() === 'yes'; }
@@ -2660,6 +2670,8 @@
         if (!r.role) errors.push(nm + ': choose a job.');
       }
       if (table === 'Products' && r.active && !(num(r.retail) > 0)) warnings.push(nm + ' has no retail price — it cannot be sold until it has one.');
+      if (table === 'Products' && (r.kind === 'good' || r.kind === 'cracked') && !(C.int(r.eggsPerUnit) > 0)) errors.push(nm + ': write how many eggs are in one (e.g. 30 for a crate, 1 for a single egg).');
+      if ((table === 'Products' || table === 'Users' || table === 'Items') && r.id && rows.some(function (o, j) { return j !== i && o.id === r.id; })) errors.push(nm + ': the same code (' + r.id + ') is used twice. Delete the extra row.');
       if (table === 'Schedule' && !(num(r.day) >= 1)) errors.push('Row ' + (i + 1) + ': day must be 1 or more.');
       if (table === 'Schedule' && !String(r.title || '').trim()) errors.push('Row ' + (i + 1) + ': write what to do.');
       if (table === 'Recipes' && (!r.recipeName || !r.ingredientItemId || !(num(r.kg) > 0))) errors.push('Row ' + (i + 1) + ': needs a recipe name, an ingredient and kg.');

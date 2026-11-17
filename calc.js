@@ -86,7 +86,25 @@ var Calc = (function () {
     return { day: day, week: week, stage: stage };
   }
 
-  function productMap(state) { return byId(state.products); }
+  // If the same product code is in the list twice, the active egg product wins (never a blank copy).
+  function productMap(state) {
+    var m = {};
+    (state.products || []).forEach(function (p) {
+      if (!p || p.id === undefined) return;
+      var old = m[p.id];
+      if (!old) { m[p.id] = p; return; }
+      var score = function (x) { return (x.active !== false ? 2 : 0) + (int(x.eggsPerUnit) > 0 ? 1 : 0); };
+      if (score(p) > score(old)) m[p.id] = p;
+    });
+    return m;
+  }
+  // eggs in one unit; an egg product left at 0/blank falls back to the number in its name "(30)", then to eggs per crate
+  function eggsIn(state, p) {
+    var n = int(p && p.eggsPerUnit);
+    if (n > 0 || !p || (p.kind !== 'good' && p.kind !== 'cracked')) return n;
+    var m = /\((\d+)\)/.exec(String(p.name || ''));
+    return m ? int(m[1]) : (settingsOf(state).eggsPerCrate || 30);
+  }
   function userMap(state) { return byId(state.users); }
 
   // Birds that left the flock: deaths + culls from daily records, and spent hens sold.
@@ -206,7 +224,7 @@ var Calc = (function () {
   function lineEggs(state, line) {
     var p = productMap(state)[line.productId];
     if (!p) return { good: 0, cracked: 0 };
-    var pcs = int(line.qty) * (int(p.eggsPerUnit) || 0);
+    var pcs = int(line.qty) * eggsIn(state, p);
     var col = lineColour(state, line);
     if (p.kind === 'good') return { good: pcs, cracked: 0, colour: col };
     if (p.kind === 'cracked') return { good: 0, cracked: pcs, colour: col };
@@ -1416,7 +1434,7 @@ var Calc = (function () {
     generateFlockTasks: generateFlockTasks, nextDate: nextDate, taskStatus: taskStatus, dashboard: dashboard,
     lastDayOfMonth: lastDayOfMonth, balanceAt: balanceAt, monthlyReport: monthlyReport, reportHtml: reportHtml, money: money,
     oldestUnpaidDate: oldestUnpaidDate, debtSummary: debtSummary, periodSummary: periodSummary, yearSummary: yearSummary,
-    dayRecords: dayRecords, dayTotal: dayTotal, weekStart: weekStart,
+    dayRecords: dayRecords, dayTotal: dayTotal, weekStart: weekStart, eggsIn: eggsIn,
     repeatCode: repeatCode, repeatParts: repeatParts, repeatText: repeatText, repeatDate: repeatDate, seriesDates: seriesDates,
     deleteImpact: deleteImpact, resetPlan: resetPlan, RESET_GROUPS: RESET_GROUPS,
     alarmSettings: alarmSettings, alarmsFor: alarmsFor, coopSummary: coopSummary,
