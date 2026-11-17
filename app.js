@@ -1563,12 +1563,23 @@
     return back('crates', 'Crates') + head('Correct store count', 'Store shows ' + storeText(store)) +
       '<form class="card" data-form="crateadj"><div class="grid g2"><label>Eggs<select name="eggKind">' + opt('good', 'Good') + opt('cracked', 'Cracked') + '</select></label>' +
       (twoColours() ? '<label>Colour<select name="colour">' + opt('brown', 'Brown') + opt('white', 'White') + '</select></label>' : '') +
-      '<label>Counted now (pieces)<input name="counted" type="number" min="0" inputmode="numeric" required></label></div><label>Reason<input name="reason" required placeholder="e.g. stock count, eggs used at home, broken in store"></label><button class="btn" type="submit">Next: preview →</button></form>';
+      '</div><div class="small bold" style="margin-top:4px">What you counted in the store room now</div><div class="grid g2"><label>Full crates<input name="countedCrates" type="number" min="0" step="1" inputmode="numeric" placeholder="e.g. 200"></label>' +
+      '<label>Loose eggs (pieces)<input name="countedPieces" type="number" min="0" step="1" inputmode="numeric" placeholder="e.g. 12"></label></div>' +
+      '<div class="alert ok small" id="adjLive" aria-live="polite">Type what you counted.</div><label>Reason<input name="reason" required placeholder="e.g. stock count, eggs used at home, broken in store"></label><button class="btn" type="submit">Next: preview →</button></form>';
+  };
+  function adjCounted(f) { return C.int(val(f, 'countedCrates')) * C.settingsOf(st()).eggsPerCrate + C.int(val(f, 'countedPieces')); }
+  LIVE.crateadj = function (f) {
+    var box = document.getElementById('adjLive'); if (!box) return;
+    var store0 = C.eggStore(st(), today()), kind = val(f, 'eggKind'), col = val(f, 'colour') || colours()[0], store = twoColours() ? store0[col] : store0;
+    if (val(f, 'countedCrates') === '' && val(f, 'countedPieces') === '') { box.textContent = 'Type what you counted.'; return; }
+    var counted = adjCounted(f), diff = counted - store[kind];
+    box.innerHTML = 'App shows <b>' + crates(store[kind]) + '</b> · you counted <b>' + crates(counted) + '</b> → the app will ' + (diff === 0 ? 'not change' : (diff > 0 ? 'add ' : 'take off ') + '<b>' + crates(Math.abs(diff)) + '</b>');
   };
   FORMS.crateadj = function (f) {
-    var store0 = C.eggStore(st(), today()), kind = val(f, 'eggKind'), col = val(f, 'colour') || colours()[0], store = twoColours() ? store0[col] : store0, counted = C.int(val(f, 'counted')), diff = counted - store[kind];
-    preview({ title: 'Correct ' + (twoColours() ? col + ' ' : '') + kind + ' egg count', errors: val(f, 'reason').trim() ? [] : ['Give a reason.'], warnings: diff ? [] : ['The count is the same as the app — nothing to change.'],
-      rows: [['App shows', crates(store[kind])], ['Counted', crates(counted)], ['Change', (diff > 0 ? '+' : '') + diff + ' pieces', diff < 0 ? 'red' : '']],
+    var store0 = C.eggStore(st(), today()), kind = val(f, 'eggKind'), col = val(f, 'colour') || colours()[0], store = twoColours() ? store0[col] : store0, counted = adjCounted(f), diff = counted - store[kind];
+    var errs = []; if (!val(f, 'reason').trim()) errs.push('Give a reason.'); if (val(f, 'countedCrates') === '' && val(f, 'countedPieces') === '') errs.push('Type the crates (and loose eggs) you counted.');
+    preview({ title: 'Correct ' + (twoColours() ? col + ' ' : '') + kind + ' egg count', errors: errs, warnings: diff ? [] : ['The count is the same as the app — nothing to change.'],
+      rows: [['App shows', crates(store[kind])], ['You counted', crates(counted)], ['Change', (diff > 0 ? '+ ' : '− ') + crates(Math.abs(diff)), diff < 0 ? 'red' : '']],
       onConfirm: async function () { await E.save({ type: 'stock', kind: 'adjust', date: today(), eggKind: kind, colour: col, pieces: diff, reason: val(f, 'reason').trim() }); return 'crates'; } });
   };
 
@@ -2488,7 +2499,7 @@
       out += '<div class="card stack" style="margin-top:12px;border-color:#E7A08D"><h2>Start fresh</h2><p class="small muted" style="margin:0">Delete ALL records — coops, daily records, tasks, sales, payments, customers, crates, feed, medicine and expenses — on the Sheet and on every phone. Your settings, people, prices, items and schedule are kept. A backup copy of the Sheet is saved in Google Drive first.</p>' +
         '<a class="btn red" href="#start-fresh">Start fresh…</a><p class="tiny muted" style="margin:0">This button switches itself off again after it is used.</p></div>';
     }
-    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v2.4' + (NATIVE ? ' (Android app)' : '') + ' · data is kept on this device and in your Google Sheet.</p>';
+    out += '<button class="btn red block" style="margin-top:12px" type="button" data-act="logout">Log out</button><p class="tiny muted" style="margin-top:10px">The Egg Man Farms app v2.5' + (NATIVE ? ' (Android app)' : '') + ' · data is kept on this device and in your Google Sheet.</p>';
     return out;
   };
   function startFreshOn() { return String(setting('allowStartFresh', 'no')).trim().toLowerCase() === 'yes'; }
